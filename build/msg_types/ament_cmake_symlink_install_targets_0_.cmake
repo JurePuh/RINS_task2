@@ -1,1 +1,0 @@
-ament_cmake_symlink_install_targets("TARGET_FILES" "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_py/msg_types/msg_types_s__rosidl_typesupport_fastrtps_c.so" "TARGETS" "msg_types_s__rosidl_typesupport_fastrtps_c" "DESTINATION" "lib/python3.12/site-packages/msg_types")

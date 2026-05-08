@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_cpp/msg_types/msg/detail/face_detect__traits.hpp

@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_typesupport_fastrtps_cpp/msg_types/msg/rosidl_typesupport_fastrtps_cpp__visibility_control.h

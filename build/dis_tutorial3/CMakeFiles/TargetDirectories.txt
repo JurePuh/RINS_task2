@@ -1,9 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/uninstall.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/dis_tutorial3_uninstall.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/test.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/edit_cache.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/rebuild_cache.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/list_install_components.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/install.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/install/local.dir
-/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/CMakeFiles/install/strip.dir

@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_typesupport_fastrtps_c/msg_types/msg/detail/subject_clear__rosidl_typesupport_fastrtps_c.h

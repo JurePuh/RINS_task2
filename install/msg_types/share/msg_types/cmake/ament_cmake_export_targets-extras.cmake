@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/ament_cmake_export_targets/ament_cmake_export_targets-extras.cmake

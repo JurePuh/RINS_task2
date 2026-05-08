@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_rs/msg_types/rust/src/msg/rmw.rs

@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_typesupport_introspection_cpp/msg_types/msg/detail/subject_clear__rosidl_typesupport_introspection_cpp.hpp

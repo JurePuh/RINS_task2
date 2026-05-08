@@ -1,1 +1,0 @@
-/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_cmake/rosidl_cmake_export_typesupport_libraries-extras.cmake
