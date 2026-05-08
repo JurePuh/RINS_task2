@@ -1,0 +1,1 @@
+/home/puhster/Desktop/RINS_task2/build/msg_types/ament_cmake_core/msg_typesConfig-version.cmake

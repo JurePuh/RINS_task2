@@ -1,0 +1,10 @@
+setup.py
+msg_types/__init__.py
+msg_types.egg-info/PKG-INFO
+msg_types.egg-info/SOURCES.txt
+msg_types.egg-info/dependency_links.txt
+msg_types.egg-info/top_level.txt
+msg_types/msg/__init__.py
+msg_types/msg/_face_detect.py
+msg_types/msg/_ring_detect.py
+msg_types/msg/_subject_clear.py

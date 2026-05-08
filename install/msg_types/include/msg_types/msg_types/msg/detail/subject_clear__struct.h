@@ -1,0 +1,1 @@
+/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_c/msg_types/msg/detail/subject_clear__struct.h

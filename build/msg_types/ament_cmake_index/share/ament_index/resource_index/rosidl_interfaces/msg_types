@@ -1,0 +1,6 @@
+msg/FaceDetect.idl
+msg/FaceDetect.msg
+msg/RingDetect.idl
+msg/RingDetect.msg
+msg/SubjectClear.idl
+msg/SubjectClear.msg

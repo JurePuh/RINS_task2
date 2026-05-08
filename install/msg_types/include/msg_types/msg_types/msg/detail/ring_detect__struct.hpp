@@ -1,0 +1,1 @@
+/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_cpp/msg_types/msg/detail/ring_detect__struct.hpp

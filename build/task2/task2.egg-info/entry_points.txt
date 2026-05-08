@@ -1,0 +1,3 @@
+[console_scripts]
+detect_faces = task1.detect_faces:main
+detect_rings = task1.detect_rings3:main

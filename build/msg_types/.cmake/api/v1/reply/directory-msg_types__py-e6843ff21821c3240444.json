@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "msg_types__py",
+		"source" : "/home/puhster/Desktop/RINS_task2/build/msg_types/msg_types__py"
+	}
+}

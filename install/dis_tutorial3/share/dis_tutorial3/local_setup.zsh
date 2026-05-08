@@ -1,0 +1,1 @@
+/home/puhster/Desktop/RINS_task2/build/dis_tutorial3/ament_cmake_environment_hooks/local_setup.zsh

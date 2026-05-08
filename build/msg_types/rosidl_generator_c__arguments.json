@@ -1,0 +1,44 @@
+{
+  "package_name": "msg_types",
+  "output_dir": "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_c/msg_types",
+  "template_dir": "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource",
+  "idl_tuples": [
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types:msg/FaceDetect.idl",
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types:msg/SubjectClear.idl",
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types:msg/RingDetect.idl"
+  ],
+  "ros_interface_files": [
+    "/home/puhster/Desktop/RINS_task2/src/msg_types/msg/FaceDetect.msg",
+    "/home/puhster/Desktop/RINS_task2/src/msg_types/msg/SubjectClear.msg",
+    "/home/puhster/Desktop/RINS_task2/src/msg_types/msg/RingDetect.msg"
+  ],
+  "target_dependencies": [
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../../../lib/rosidl_generator_c/rosidl_generator_c",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../../../lib/python3.12/site-packages/rosidl_generator_c/__init__.py",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/action__type_support.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/action__type_support.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/empty__description.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/full__description.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__description.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__functions.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__functions.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__struct.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__type_support.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/idl__type_support.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/msg__functions.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/msg__functions.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/msg__struct.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/msg__type_support.h.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/srv__type_support.c.em",
+    "/opt/ros/jazzy/share/rosidl_generator_c/cmake/../resource/srv__type_support.h.em",
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types/msg/FaceDetect.idl",
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types/msg/SubjectClear.idl",
+    "/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_adapter/msg_types/msg/RingDetect.idl"
+  ],
+  "type_description_tuples": [
+    "msg/FaceDetect.idl:/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_type_description/msg_types/msg/FaceDetect.json",
+    "msg/SubjectClear.idl:/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_type_description/msg_types/msg/SubjectClear.json",
+    "msg/RingDetect.idl:/home/puhster/Desktop/RINS_task2/build/msg_types/rosidl_generator_type_description/msg_types/msg/RingDetect.json"
+  ]
+}

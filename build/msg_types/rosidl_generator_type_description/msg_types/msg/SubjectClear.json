@@ -1,0 +1,26 @@
+{
+  "type_description_msg": {
+    "type_description": {
+      "type_name": "msg_types/msg/SubjectClear",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "type_id": 2,
+            "capacity": 0,
+            "string_capacity": 0,
+            "nested_type_name": ""
+          },
+          "default_value": ""
+        }
+      ]
+    },
+    "referenced_type_descriptions": []
+  },
+  "type_hashes": [
+    {
+      "type_name": "msg_types/msg/SubjectClear",
+      "hash_string": "RIHS01_e5c786e2cfe2f60fb981d008e6f52caa9983ca6ca092bcef5321b80fea5c3250"
+    }
+  ]
+}
