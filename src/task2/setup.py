@@ -24,8 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'detect_faces = task1.detect_faces:main',
-            'detect_rings = task1.detect_rings3:main',
+            'detect_faces = task2.detect_faces:main',
+            'detect_rings = task2.detect_rings3:main',
         ],
     },
 )

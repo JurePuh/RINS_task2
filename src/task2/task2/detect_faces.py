@@ -17,6 +17,8 @@ from cv_bridge import CvBridge, CvBridgeError
 
 import cv2
 import numpy as np
+import torch
+from facenet_pytorch import InceptionResnetV1
 
 import message_filters
 from message_filters import ApproximateTimeSynchronizer
@@ -36,12 +38,12 @@ class Face():
 class detect_faces(Node):
     def __init__(self):
         super().__init__('detect_faces')
-        self._logger = self._logger
         
-        self._logger.info("NEW VERSION2")
+        self.get_logger().info(f"VERSION: FACES")
 
         # model definition
         self.model = YOLO("yolov8n.pt")
+        self.embedding_model = InceptionResnetV1(pretrained='vggface2').eval()
 
         # marker publisher
         self.marker_pub = self.create_publisher(Marker, "/people_marker2", 10)
@@ -127,7 +129,6 @@ class detect_faces(Node):
         return False
 
 
-
     def seen(self, new_face):
         """ checking if the face was already seen 
 
@@ -141,6 +142,7 @@ class detect_faces(Node):
         
 
         return False, None
+
 
     
     def subject_clear_callback(self, data):
@@ -166,6 +168,18 @@ class detect_faces(Node):
             self.face_pub.publish(msg)
             self._logger.debug(f"published face msg with id={face.id}, x={face.x}, y={face.y}")
 
+
+    def embed_face(cropped_face):
+        face_resized = cv2.resize(cropped_face, (160, 160))
+        face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
+        face_normalized = (face_rgb / 255.0 - 0.5) / 0.5
+        tensor = torch.tensor(face_normalized.transpose(2, 0, 1), dtype=torch.float32).unsqueeze(0)
+
+        with torch.no_grad():
+            embedding = self.embedding_model(tensor)
+    
+        return embedding.squeeze().numpy()  # 128-d vector
+
     def synced_callback(self, rgb_msg, pc_msg):
         try:
             cv_image = self.bridge.imgmsg_to_cv2(rgb_msg, "bgr8")
@@ -188,7 +202,15 @@ class detect_faces(Node):
 
             bbox = bbox[0]
 
-            cv_image = cv2.rectangle(cv_image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), self.detection_color, 3)
+            # crop face
+            h, w = cv_image.shape[:2]
+            x1 = max(0, int(float(bbox[0])))
+            y1 = max(0, int(float(bbox[1])))
+            x2 = min(w, max(x1 + 1, int(float(bbox[2]))))
+            y2 = min(h, max(y1 + 1, int(float(bbox[3]))))
+            cropped_face = cv_image[y1:y2, x1:x2]
+
+            cv_image = cv2.rectangle(cv_image, (x1, y1), (x2, y2), self.detection_color, 3)
             cx = int((bbox[0] + bbox[2]) / 2)
             cy = int((bbox[1] + bbox[3]) / 2)
             cv_image = cv2.circle(cv_image, (cx, cy), 5, self.detection_color, -1)
@@ -199,6 +221,12 @@ class detect_faces(Node):
             if np.isnan(d[0]):
                 self._logger.warn("Depth is NaN at face center, skipping")
                 continue
+
+
+            # face classifier
+            face_embedding = self.embed_face(cropped_face)
+            self._logger.info(f"face_embedding")
+
 
 
             # Build a pose
@@ -274,3 +302,4 @@ def main():
 
 if __name__ == '__main__':
 	main()
+
