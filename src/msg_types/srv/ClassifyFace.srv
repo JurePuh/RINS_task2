@@ -1,0 +1,7 @@
+# On-demand face classification (trigger only — grabs live frames from camera topic).
+---
+string name    # personnel_embeddings_dict key (filename stem)
+string role
+string gender
+bool success
+string message

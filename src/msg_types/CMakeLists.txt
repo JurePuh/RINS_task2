@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/FaceDetect.msg"
   "msg/SubjectClear.msg"
   "msg/RingDetect.msg"
+  "srv/ClassifyFace.srv"
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

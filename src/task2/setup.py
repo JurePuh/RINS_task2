@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'detect_faces = task2.detect_faces:main',
             'detect_rings = task2.detect_rings3:main',
+            'classify_face = task2.classify_face:main',
         ],
     },
 )
