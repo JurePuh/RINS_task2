@@ -3,3 +3,12 @@ install/
 log/
 yolov8n.pt
 src/task2/.vscode/*
+src/task2/task2/detect_faces/__pycache__/*
+src/task2/task2/detect_rings/__pycache__/*
+src/task2/task2/map_query/__pycache__/*
+src/task2/task2/movement/__pycache__/*
+src/task2/task2/speak/__pycache__/*
+src/task2/task2/classify_face/__pycache__/*
+src/task2/task2/__pycache__/*
+.vscode/*
+src/task2/.vscode/*
