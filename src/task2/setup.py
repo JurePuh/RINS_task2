@@ -24,9 +24,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'detect_faces = task2.detect_faces:main',
-            'detect_rings = task2.detect_rings3:main',
-            'classify_face = task2.classify_face:main',
+            'detect_faces = task2.detect_faces.main:main',
+            'detect_rings = task2.detect_rings.main:main',
+            'classify_face = task2.classify_face.main:main',
+            'movement = task2.movement.main:main',
+            'speak = task2.speak.main:main',
+            'map_query = task2.map_query.main:main',
         ],
     },
 )

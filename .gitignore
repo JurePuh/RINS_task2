@@ -2,3 +2,4 @@ build/
 install/
 log/
 yolov8n.pt
+src/task2/.vscode/*

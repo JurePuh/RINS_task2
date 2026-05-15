@@ -23,7 +23,7 @@ from ultralytics import YOLO
 
 from cv_bridge import CvBridge, CvBridgeError
 
-from task2.personnel_embeddings_dict import personnel_data
+from task2.classify_face.personnel_embeddings_dict import personnel_data
 
 from msg_types.srv import ClassifyFace
 
