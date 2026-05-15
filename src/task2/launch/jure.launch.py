@@ -11,18 +11,6 @@ def generate_launch_description():
         ),
         Node(
             package='task2',
-            executable='detect_rings.main',
-            name='detect_rings',
-            output='screen',
-        ),
-        Node(
-            package='task2',
-            executable='speak.main',
-            name='speak',
-            output='screen',
-        ),
-        Node(
-            package='task2',
             executable='classify_face.main',
             name='classify_face',
             output='screen',
