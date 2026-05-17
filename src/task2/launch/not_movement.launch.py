@@ -5,31 +5,31 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='task2',
-            executable='detect_faces.main',
+            executable='detect_faces',
             name='detect_faces',
             output='screen',
         ),
         Node(
             package='task2',
-            executable='detect_rings.main',
+            executable='detect_rings',
             name='detect_rings',
             output='screen',
         ),
         Node(
             package='task2',
-            executable='speak.main',
+            executable='speak',
             name='speak',
             output='screen',
         ),
         Node(
             package='task2',
-            executable='classify_face.main',
+            executable='classify_face',
             name='classify_face',
             output='screen',
         ),
         Node(
             package='task2',
-            executable='map_query.main',
+            executable='map_query',
             name='map_query',
             output='screen',
         ),

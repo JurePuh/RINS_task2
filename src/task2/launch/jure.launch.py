@@ -5,13 +5,13 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='task2',
-            executable='detect_faces.main',
+            executable='detect_faces',
             name='detect_faces',
             output='screen',
         ),
         Node(
             package='task2',
-            executable='classify_face.main',
+            executable='classify_face',
             name='classify_face',
             output='screen',
         ),
