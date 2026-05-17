@@ -23,7 +23,7 @@ from facenet_pytorch import InceptionResnetV1
 import message_filters
 from message_filters import ApproximateTimeSynchronizer
 
-from msg_types.msg import FaceDetect, SubjectClear
+from msg_types.msg import FaceDetect
 
 class Face():
     def __init__(self, x, y, id=None, seen_counter=0, sum_x=0, sum_y=0):
@@ -48,12 +48,8 @@ class detect_faces(Node):
         # marker publisher
         self.marker_pub = self.create_publisher(Marker, "/people_marker2", 10)
 
-        # face found publisher
+        # face found publisher — fires once per accepted face, ever.
         self.face_pub = self.create_publisher(FaceDetect, "/face_detect", 10)
-
-        self.publish_hz = 5.0
-        self.timer = self.create_timer(1.0 / self.publish_hz, self.publish_face_msg)        
-
 
         # tf
         self.tf_buffer = tf2_ros.Buffer()
@@ -62,11 +58,6 @@ class detect_faces(Node):
         # Create message_filters subscribers (not regular subscriptions)
         self.rgb_sub = message_filters.Subscriber(self, Image, "/oakd/rgb/preview/image_raw", qos_profile=qos_profile_sensor_data)
         self.pc_sub = message_filters.Subscriber(self, PointCloud2, "/oakd/rgb/preview/depth/points", qos_profile=qos_profile_sensor_data)
-        
-        
-        self.clear_face_sub = self.create_subscription(SubjectClear, "/face_clear", self.subject_clear_callback, qos_profile=qos_profile_sensor_data)
-
-
 
         # synchronize topics with 50ms error allowed
         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.pc_sub],queue_size=5,slop=0.05)
@@ -85,11 +76,20 @@ class detect_faces(Node):
 
 
         # face logic
+        # potential_faces: detections still accumulating sightings toward the
+        #     accept threshold.
+        # accepted_face_keys: quantised (x, y) cells of faces already published.
+        #     Used to silently drop further sightings of the same face so they
+        #     don't keep spawning new entries in potential_faces.
         self.potential_faces = []
-        self.visited_faces = []
-        self.visiting_faces = []
+        self.accepted_face_keys: set[tuple[int, int]] = set()
         self.id_counter = 0
         self.accept_threshold = 10
+
+    @staticmethod
+    def _accept_key(x: float, y: float) -> tuple[int, int]:
+        # 0.5 m bins — matches the 0.5 m tolerance used by `seen()`.
+        return (round(x * 2), round(y * 2))
 
 
     def build_marker(self, pc_msg, map_pose, face_id):
@@ -117,59 +117,21 @@ class detect_faces(Node):
         return marker
 
 
-    def visited(self, new_face):
-        """ Checks if a face was already visited 
-            arg: new_face is tuple (x, y)"""
-
-        x, y = new_face[0], new_face[1]
-        for face in self.visited_faces:
-            if abs(face.x - x) < 0.5 and abs(face.y - y) < 0.5:
-                return True
-        
-        return False
-
-
     def seen(self, new_face):
-        """ checking if the face was already seen 
+        """ checking if the face was already seen
 
         arg: new_face is tuple (x, y)
         """
 
         x, y = new_face[0], new_face[1]
-        for face in self.potential_faces + self.visiting_faces:
+        for face in self.potential_faces:
             if abs(face.x - x) < 0.5 and abs(face.y - y) < 0.5:
                 return True, face
-        
 
         return False, None
 
 
-    
-    def subject_clear_callback(self, data):
-        self._logger.debug(f"TRYING TO REMOVE")
-        face_id = data.id
-        if self.visiting_faces[0].id == face_id:
-            self.visited_faces.append(self.visiting_faces[0])
-            self.visiting_faces.pop(0)
-
-            self._logger.info(f"REMOVING FACE WITH ID={face_id}")
-
-
-    def publish_face_msg(self):
-        self._logger.debug(f"trying to publish")
-        if len(self.visiting_faces) != 0:
-            face = self.visiting_faces[0]
-
-            msg = FaceDetect()
-            msg.x = face.x
-            msg.y = face.y
-            msg.id = face.id
-
-            self.face_pub.publish(msg)
-            self._logger.debug(f"published face msg with id={face.id}, x={face.x}, y={face.y}")
-
-
-    def embed_face(cropped_face):
+    def embed_face(self, cropped_face):
         face_resized = cv2.resize(cropped_face, (160, 160))
         face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
         face_normalized = (face_rgb / 255.0 - 0.5) / 0.5
@@ -252,35 +214,42 @@ class detect_faces(Node):
 
         
 
-            if not self.visited(new_face):
-                # face not visited yet
-                was_seen, face = self.seen(new_face)
-                if not was_seen:
-                    # not seen before
-                    face = Face(x=face_x, y=face_y, seen_counter=1, sum_x=face_x, sum_y=face_y)
-                    self.potential_faces.append(face)
-                    self._logger.info(f"NEW face x={face_x}, y={face_y}")
-                    
-                else: # face already seen before    
-                    face.sum_x += face_x
-                    face.sum_y += face_y
-                    face.seen_counter += 1
-                    face.x = face.sum_x / face.seen_counter                     # recalculate face center
-                    face.y = face.sum_y / face.seen_counter
-                    #self._logger.info(f"+1 x={face_x}, y={face_y}")
+            # Drop further sightings of an already-accepted face. Mission
+            # logic (visited/handled) lives in the movement node now; the
+            # detector just fires once when a face crosses the threshold.
+            if self._accept_key(face_x, face_y) in self.accepted_face_keys:
+                continue
 
- 
-                    if face.seen_counter > self.accept_threshold and ( face not in self.visiting_faces ):
-                        self._logger.info(f"Accepted face x={face_x}, y={face_y}")
-                        
-                        face.id = self.id_counter
-                        self.id_counter += 1
+            was_seen, face = self.seen(new_face)
+            if not was_seen:
+                face = Face(x=face_x, y=face_y, seen_counter=1, sum_x=face_x, sum_y=face_y)
+                self.potential_faces.append(face)
+                self._logger.info(f"NEW face x={face_x}, y={face_y}")
+            else:
+                face.sum_x += face_x
+                face.sum_y += face_y
+                face.seen_counter += 1
+                face.x = face.sum_x / face.seen_counter
+                face.y = face.sum_y / face.seen_counter
 
-                        marker = self.build_marker(pc_msg, map_pose, face.id)
-                        self.marker_pub.publish(marker)
+                if face.seen_counter > self.accept_threshold:
+                    face.id = self.id_counter
+                    self.id_counter += 1
 
-                        self.visiting_faces.append(face)
-                        self.potential_faces.remove(face)
+                    marker = self.build_marker(pc_msg, map_pose, face.id)
+                    self.marker_pub.publish(marker)
+
+                    msg = FaceDetect()
+                    msg.id = face.id
+                    msg.x = face.x
+                    msg.y = face.y
+                    self.face_pub.publish(msg)
+                    self._logger.info(
+                        f"Accepted face id={face.id} at x={face.x:.2f}, y={face.y:.2f}"
+                    )
+
+                    self.accepted_face_keys.add(self._accept_key(face.x, face.y))
+                    self.potential_faces.remove(face)
                         
 
     
