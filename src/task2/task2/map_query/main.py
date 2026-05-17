@@ -1,6 +1,6 @@
 import rclpy
 
-from task1.map_query.node import WallNormalAtNode
+from task2.map_query.node import WallNormalAtNode
 
 
 def main():
