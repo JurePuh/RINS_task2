@@ -29,7 +29,7 @@ from msg_types.msg import FaceDetect
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours import follow_path, go_to_face
-from task2.movement.behaviours.conditions import HasUnhandledFace, MarkFaceHandled
+from task2.movement.behaviours.face_conditions import HasUnhandledFace, MarkFaceHandled
 
 
 def build_root() -> py_trees.behaviour.Behaviour:
@@ -40,8 +40,10 @@ def build_root() -> py_trees.behaviour.Behaviour:
     writer = py_trees.blackboard.Client(name="bootstrap")
     writer.register_key(key=bb.PENDING_FACES, access=py_trees.common.Access.WRITE)
     writer.register_key(key=bb.HANDLED_FACES, access=py_trees.common.Access.WRITE)
+    writer.register_key(key=bb.RECOMPUTE_DESTINATION, access=py_trees.common.Access.WRITE)
     writer.set(bb.PENDING_FACES, deque())
     writer.set(bb.HANDLED_FACES, set())
+    writer.set(bb.RECOMPUTE_DESTINATION, False)
 
     approach = py_trees.composites.Sequence(name="ApproachUnhandledFace", memory=True)
     approach.add_children([
@@ -57,22 +59,35 @@ def build_root() -> py_trees.behaviour.Behaviour:
 
 def attach_face_subscription(node: rclpy.node.Node) -> None:
     """Wire `/face_detect` into the blackboard's pending_faces deque.
-
-    Called once, after the py_trees_ros tree has been set up (so the
-    blackboard already has its seed values). Runs on the rclpy executor
-    thread; the tree thread reads/pops on its own thread. deque is
-    thread-safe for single-producer / single-consumer use, which is exactly
-    this pattern, so no extra locking is needed.
     """
     reader = py_trees.blackboard.Client(name="face_subscription")
     reader.register_key(key=bb.PENDING_FACES, access=py_trees.common.Access.READ)
     reader.register_key(key=bb.HANDLED_FACES, access=py_trees.common.Access.READ)
+    reader.register_key(key=bb.RECOMPUTE_DESTINATION, access=py_trees.common.Access.WRITE)
 
     def on_face(msg: FaceDetect) -> None:
         pending = reader.get(bb.PENDING_FACES)
         handled = reader.get(bb.HANDLED_FACES)
-        if msg.id in handled or any(f.id == msg.id for f in pending):
-            return  # all dedup lives here; detect_faces just fires once
+
+        # Too late, already handled
+        if msg.id in handled:
+            node.get_logger().debug(f"ignoring face_detect for already-handled {msg.id}")
+            return
+
+        # Existing face destination updated
+        for i, f in enumerate(pending):
+            if f.id == msg.id:
+                pending[i] = msg
+                # If this is the head face, the in-flight goal is now stale.
+                # Flag a recompute so NavigateToFaceDestination cancels and
+                # the sequence restarts from ComputeFaceDestination.
+                if i == 0:
+                    reader.set(bb.RECOMPUTE_DESTINATION, True)
+                node.get_logger().info(
+                    f"updated face {msg.id} location to ({msg.x:.2f}, {msg.y:.2f})"
+                )
+                return
+
         pending.append(msg)
         node.get_logger().info(
             f"new face {msg.id} queued at ({msg.x:.2f}, {msg.y:.2f}); "
