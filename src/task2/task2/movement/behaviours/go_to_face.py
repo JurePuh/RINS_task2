@@ -192,21 +192,6 @@ class ComputeFaceDestination(py_trees.behaviour.Behaviour):
 
 class NavigateToFaceDestination(py_trees.behaviour.Behaviour):
     """Send FACE_DESTINATION to nav2 and drive there, with two extras over the
-    stock action-client behaviour:
-
-    1. **Recompute on update.** If RECOMPUTE_DESTINATION flips to True
-       mid-flight (the /face_detect subscription saw the head face move),
-       cancel the goal and return FAILURE. The parent Sequence aborts before
-       MarkFaceHandled ticks, so the face stays in the queue and the next
-       entry recomputes the destination with the fresh coordinates.
-
-    2. **Stall bail-out.** Watch nav2's feedback.distance_remaining. If it
-       hasn't improved by _IMPROVEMENT_EPSILON for _STALL_TIMEOUT seconds,
-       cancel the goal and return SUCCESS — treat the face as visited so we
-       don't grind on an unreachable point forever.
-
-    Any natural termination (SUCCEEDED, ABORTED, CANCELED) also returns
-    SUCCESS — the face is considered handled regardless of outcome.
     """
 
     def __init__(self, name: str = "NavigateToFaceDestination"):
@@ -229,6 +214,8 @@ class NavigateToFaceDestination(py_trees.behaviour.Behaviour):
         # Once we've decided to cancel, what status to return after the cancel
         # round-trip finishes. SUCCESS for stall, FAILURE for recompute.
         self._post_cancel_status: py_trees.common.Status | None = None
+
+        # self._ros_logger set in setup()
 
     def setup(self, **kwargs):
         try:

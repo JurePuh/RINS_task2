@@ -20,8 +20,38 @@ import py_trees
 import py_trees_ros
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
+from rclpy.node import Node
 
 from task2.movement.models import Pose
+
+
+class _LoggingNavWaypoint(py_trees_ros.action_clients.FromConstant):
+    """FromConstant that logs 'navigating to pose ...' on each fresh attempt."""
+
+    def __init__(self, name: str, pose: Pose, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self._pose = pose
+
+        # self._ros_logger set in setup()
+
+    def setup(self, **kwargs):
+        super().setup(**kwargs)
+        try:
+            self.node: Node = kwargs["node"]
+        except KeyError as e:
+            raise KeyError(
+                f"{self.qualified_name}: 'node' missing from setup kwargs"
+            ) from e
+        self._ros_logger = self.node.get_logger()
+
+    def initialise(self):
+        super().initialise()
+
+        p = self._pose
+        self._ros_logger.info(
+            f"{self.name}: navigating to pose "
+            f"({p.x:.2f}, {p.y:.2f}, θ={p.theta:.2f})"
+        )
 
 
 # Placeholder waypoints — replace with task2 map waypoints once the new map
@@ -62,8 +92,9 @@ def build(path: list[Pose] | None = None) -> py_trees.composites.Sequence:
 
     seq = py_trees.composites.Sequence(name="FollowPath", memory=True)
     for i, p in enumerate(waypoints):
-        child = py_trees_ros.action_clients.FromConstant(
+        child = _LoggingNavWaypoint(
             name=f"WP{i}({p.x:.2f},{p.y:.2f})",
+            pose=p,
             action_type=NavigateToPose,
             action_name="navigate_to_pose",
             action_goal=_pose_to_goal(p),

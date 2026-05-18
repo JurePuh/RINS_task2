@@ -14,6 +14,8 @@ class HasUnhandledFace(py_trees.behaviour.Behaviour):
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.PENDING_FACES, access=py_trees.common.Access.READ)
 
+        # self._ros_logger set in setup()
+
     def setup(self, **kwargs):
         # Get the ros logger
         try:
@@ -43,6 +45,8 @@ class MarkFaceHandled(py_trees.behaviour.Behaviour):
         # Read+write because we mutate the deque and the set in-place.
         self.bb.register_key(key=bb.PENDING_FACES, access=py_trees.common.Access.WRITE)
         self.bb.register_key(key=bb.HANDLED_FACES, access=py_trees.common.Access.WRITE)
+
+        # self._ros_logger set in setup()
 
     def setup(self, **kwargs):
         # Get the ros logger
