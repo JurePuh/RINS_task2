@@ -1,0 +1,3 @@
+# Trigger pile anomaly detection on the latest camera frame.
+---
+string result  # "defected", "not_defected", or "not_found"

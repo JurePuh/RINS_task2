@@ -16,6 +16,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/SubjectClear.msg"
   "msg/RingDetect.msg"
   "srv/ClassifyFace.srv"
+  "srv/DetectAnomalies.srv"
   "srv/WallNormalAt.srv"
 )
 if(BUILD_TESTING)

@@ -12,3 +12,5 @@ src/task2/task2/classify_face/__pycache__/*
 src/task2/task2/__pycache__/*
 .vscode/*
 src/task2/.vscode/*
+
+src/task2/anomaly_detection/img/*
