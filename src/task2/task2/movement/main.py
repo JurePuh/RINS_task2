@@ -20,7 +20,7 @@ def _print_on_change(tree) -> None:
             root=tree.root,
             visited=tree.snapshot_visitor.visited,
             previously_visited=tree.snapshot_visitor.previously_visited,
-        ))
+        ), flush=True)
 
 
 def main() -> None:
