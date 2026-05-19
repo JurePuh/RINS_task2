@@ -34,6 +34,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
+    keepout_mask = LaunchConfiguration('keepout_mask')
     use_composition = LaunchConfiguration('use_composition')
     container_name = LaunchConfiguration('container_name')
     container_name_full = (namespace, '/', container_name)
@@ -67,7 +68,10 @@ def generate_launch_description():
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
     # Create our own temporary YAML files that include substitutions
-    param_substitutions = {'autostart': autostart}
+    # 'yaml_filename' rewrite targets filter_mask_server (the only node in
+    # this stack with that parameter — map_server lives in the localization
+    # launch). Lets us pass the keepout mask path from the top-level launch.
+    param_substitutions = {'autostart': autostart, 'yaml_filename': keepout_mask}
 
     configured_params = ParameterFile(
         RewrittenYaml(
@@ -125,6 +129,14 @@ def generate_launch_description():
 
     declare_log_level_cmd = DeclareLaunchArgument(
         'log_level', default_value='info', description='log level'
+    )
+
+    declare_keepout_mask_cmd = DeclareLaunchArgument(
+        'keepout_mask',
+        default_value=os.path.join(
+            get_package_share_directory('dis_tutorial3'), 'maps', 'task2_keepout.yaml'
+        ),
+        description='Keepout mask yaml. Resolved into nav2.yaml via $(var keepout_mask).',
     )
 
     load_nodes = GroupAction(
@@ -391,6 +403,7 @@ def generate_launch_description():
     ld.add_action(declare_container_name_cmd)
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
+    ld.add_action(declare_keepout_mask_cmd)
     # Add the actions to launch all of the navigation nodes
     ld.add_action(load_nodes)
     ld.add_action(load_composable_nodes)

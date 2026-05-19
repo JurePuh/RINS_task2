@@ -39,6 +39,9 @@ ARGUMENTS = [
     DeclareLaunchArgument('map', default_value=PathJoinSubstitution(
                           [pkg_dis_tutorial3, 'maps', 'task2.yaml']),
                           description='Full path to map yaml file to load'),
+    DeclareLaunchArgument('keepout_mask', default_value=PathJoinSubstitution(
+                          [pkg_dis_tutorial3, 'maps', 'task2_keepout.yaml']),
+                          description='Full path to keepout mask yaml file to load'),
 ]
 
 for pose_element in ['x', 'y', 'z', 'yaw']:
@@ -60,7 +63,7 @@ def generate_launch_description():
     nav2_launch = PathJoinSubstitution(
         [pkg_dis_tutorial3, 'launch', 'nav2.launch.py'])
     nav2_params_file = PathJoinSubstitution(
-        [package_dir_robot, 'config', 'nav2.yaml'])
+        [pkg_dis_tutorial3, 'config', 'nav2.yaml'])
 
     # Launch configurations
     namespace = LaunchConfiguration('namespace')
@@ -104,6 +107,7 @@ def generate_launch_description():
             ('namespace', namespace),
             ('use_sim_time', use_sim_time),
             ('params_file', nav2_params_file),
+            ('keepout_mask', LaunchConfiguration('keepout_mask')),
         ]
     )
 

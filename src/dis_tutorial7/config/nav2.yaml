@@ -97,8 +97,8 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # ALSO CHANGE BELOW!!
-        cost_scaling_factor: 15.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
-        inflation_radius: 0.1 # How far is the "no-go zone" around obstacles?
+        cost_scaling_factor: 25.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
+        inflation_radius: 0.3 # How far is the "no-go zone" around obstacles?
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: true
@@ -171,8 +171,8 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # ALSO CHANGE ABOVE!!
-        cost_scaling_factor: 15.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
-        inflation_radius: 0.1 # How far is the "no-go zone" 
+        cost_scaling_factor: 25.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
+        inflation_radius: 0.30 # How far is the "no-go zone" 
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: true
@@ -356,5 +356,7 @@ filter_mask_server:
     use_sim_time: true
     frame_id: "map"
     topic_name: "/keepout_filter_mask"
-    # If repo moves, update this path!!! (actually, i have to fix this now)
-    yaml_filename: "/home/luc/LOCAL/Faks/RInS/project2_ws/install/dis_tutorial3/share/dis_tutorial3/maps/task2_keepout.yaml"
+    # Overwritten at launch by the `keepout_mask` arg via RewrittenYaml
+    # param_rewrites in fixed_navigation.launch.py. This default is a
+    # placeholder so the YAML parses cleanly when used standalone.
+    yaml_filename: "task2_keepout.yaml"

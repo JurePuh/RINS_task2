@@ -35,6 +35,7 @@ pkg_dis_tutorial3 = get_package_share_directory('dis_tutorial3')
 ARGUMENTS = [
     DeclareLaunchArgument('use_sim_time', default_value='false',choices=['true', 'false'], description='Use sim time'),
     DeclareLaunchArgument('params_file',  default_value=PathJoinSubstitution([pkg_dis_tutorial3,'config','nav2.yaml']), description='Nav2 parameters'),
+    DeclareLaunchArgument('keepout_mask', default_value=PathJoinSubstitution([pkg_dis_tutorial3,'maps','task2_keepout.yaml']), description='Keepout mask yaml (consumed by filter_mask_server via $(var keepout_mask) in nav2.yaml)'),
     DeclareLaunchArgument('namespace', default_value='', description='Robot namespace')
 ]
 
@@ -62,6 +63,7 @@ def launch_setup(context, *args, **kwargs):
             launch_arguments=[
                   ('use_sim_time', use_sim_time),
                   ('params_file', nav2_params.perform(context)),
+                  ('keepout_mask', LaunchConfiguration('keepout_mask').perform(context)),
                   ('use_composition', 'False'),
                   ('namespace', namespace_str)
                 ]
