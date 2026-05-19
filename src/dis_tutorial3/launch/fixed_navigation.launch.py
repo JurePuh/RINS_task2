@@ -51,6 +51,11 @@ def generate_launch_description():
         'bt_navigator',
         'waypoint_follower',
         'docking_server',
+        # Keepout filter pipeline — must come up before/with the costmaps
+        # so the keepout_filter layer in {local,global}_costmap can pick
+        # up /costmap_filter_info and /keepout_filter_mask.
+        'filter_mask_server',
+        'costmap_filter_info_server',
     ]
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
@@ -229,6 +234,35 @@ def generate_launch_description():
                 package='opennav_docking',
                 executable='opennav_docking',
                 name='docking_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings,
+            ),
+            # Keepout filter mask server: loads the keepout .pgm/.yaml
+            # (path is set in the nav2 params file via
+            # filter_mask_server.yaml_filename) and republishes it as an
+            # OccupancyGrid on /keepout_filter_mask.
+            Node(
+                package='nav2_map_server',
+                executable='map_server',
+                name='filter_mask_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=[configured_params],
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings,
+            ),
+            # Costmap filter info server: announces the filter type and
+            # mask topic on /costmap_filter_info so the keepout_filter
+            # layer in each costmap knows where to subscribe.
+            Node(
+                package='nav2_map_server',
+                executable='costmap_filter_info_server',
+                name='costmap_filter_info_server',
                 output='screen',
                 respawn=use_respawn,
                 respawn_delay=2.0,

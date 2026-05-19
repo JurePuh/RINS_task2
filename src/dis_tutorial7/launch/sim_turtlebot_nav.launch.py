@@ -59,6 +59,8 @@ def generate_launch_description():
         [pkg_dis_tutorial3, 'launch', 'localization.launch.py'])
     nav2_launch = PathJoinSubstitution(
         [pkg_dis_tutorial3, 'launch', 'nav2.launch.py'])
+    nav2_params_file = PathJoinSubstitution(
+        [package_dir_robot, 'config', 'nav2.yaml'])
 
     # Launch configurations
     namespace = LaunchConfiguration('namespace')
@@ -100,7 +102,8 @@ def generate_launch_description():
         PythonLaunchDescriptionSource([nav2_launch]),
         launch_arguments=[
             ('namespace', namespace),
-            ('use_sim_time', use_sim_time)
+            ('use_sim_time', use_sim_time),
+            ('params_file', nav2_params_file),
         ]
     )
 
