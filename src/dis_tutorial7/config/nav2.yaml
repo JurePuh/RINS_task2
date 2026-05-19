@@ -24,7 +24,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    failure_tolerance: 1.0
     progress_checker_plugins: ["progress_checker"]
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -41,24 +41,29 @@ controller_server:
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.5
-      lookahead_dist: 0.6
-      min_lookahead_dist: 0.3
-      max_lookahead_dist: 0.9
+      lookahead_dist: 0.4
+      # Velocity-scaled: carrot = clamp(vel * lookahead_time, min, max).
+      # At standstill the carrot collapses to min_lookahead_dist (~0.15 m),
+      # so when the robot stalls it aims at the nearest point on the path
+      # instead of a far carrot that crosses a keepout.
+      min_lookahead_dist: 0.15
+      max_lookahead_dist: 0.5
       lookahead_time: 1.5
       rotate_to_heading_angular_vel: 1.8
       transform_tolerance: 0.1
-      use_velocity_scaled_lookahead_dist: false
+      use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
-      use_collision_detection: true
-      max_allowed_time_to_collision_up_to_carrot: 1.0
+      # Disabled: collision_monitor below is the authoritative safety gate.
+      # RPP's own check was constantly aborting near keepouts and starving
+      # the BT into endless recovery loops.
+      use_collision_detection: false
+      max_allowed_time_to_collision_up_to_carrot: 0.4
       use_regulated_linear_velocity_scaling: true
       use_fixed_curvature_lookahead: false
       curvature_lookahead_dist: 0.25
-      # use_cost_regulated_linear_velocity_scaling: when true, robot slows
-      # down in high-cost cells (near walls / keepouts). Currently off — flip
-      # to true if you want gentler approach to inflated zones.
-      use_cost_regulated_linear_velocity_scaling: false
+      # Slow down as the footprint enters higher-cost (inflated) cells.
+      use_cost_regulated_linear_velocity_scaling: true
       regulated_linear_scaling_min_radius: 0.9
       regulated_linear_scaling_min_speed: 0.25
       use_rotate_to_heading: true
@@ -97,7 +102,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # ALSO CHANGE BELOW!!
-        cost_scaling_factor: 25.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
+        cost_scaling_factor: 15.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
         inflation_radius: 0.3 # How far is the "no-go zone" around obstacles?
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -171,8 +176,8 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # ALSO CHANGE ABOVE!!
-        cost_scaling_factor: 25.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
-        inflation_radius: 0.30 # How far is the "no-go zone" 
+        cost_scaling_factor: 15.0 # Higher -> planner hugs walls. Lower -> planner stays mid-corridor.
+        inflation_radius: 0.3 # How far is the "no-go zone" 
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: true
@@ -223,7 +228,10 @@ behavior_server:
     local_frame: odom
     robot_base_frame: base_link
     transform_tolerance: 0.1
-    simulate_ahead_time: 2.0
+    # Recoveries (spin/backup/drive_on_heading) forward-simulate their motion
+    # for this many seconds and abort if the footprint hits an inflated cell.
+    # 2.0 made every recovery refuse to run when parked near a keepout.
+    simulate_ahead_time: 1.0
     max_rotational_vel: 1.0
     min_rotational_vel: 0.4
     rotational_acc_lim: 3.2
@@ -246,8 +254,12 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [-0.26, 0.0, -1.0]
+    # This is the real top-speed cap (RPP's desired_linear_vel is clamped to
+    # this). Regulated + cost-regulated scaling in RPP automatically pull
+    # speed down on curves and near walls, so the extra headroom is used
+    # only on open straightaways.
+    max_velocity: [0.35, 0.0, 1.5]
+    min_velocity: [-0.35, 0.0, -1.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odom"
@@ -272,7 +284,7 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: "local_costmap/published_footprint"
-      time_before_collision: 1.2
+      time_before_collision: 0.6
       simulation_time_step: 0.1
       min_points: 6
       visualize: False
@@ -323,25 +335,6 @@ docking_server:
       v_linear_min: 0.15
       v_linear_max: 0.15
 
-# ---------------------------------------------------------------------------
-# Costmap filters (Keepout Filter)
-#
-# The keepout filter lets us mark "virtual obstacles" (e.g. yellow lines on
-# the floor that the lidar can't see) in a separate grayscale map. Two
-# extra Nav2 nodes are needed and are launched + lifecycle-managed by
-# dis_tutorial3/launch/fixed_navigation.launch.py:
-#
-#   filter_mask_server          : publishes the keepout mask on
-#                                 /keepout_filter_mask (OccupancyGrid).
-#   costmap_filter_info_server  : publishes the filter type and the topic
-#                                 the costmap layer should listen to, on
-#                                 /costmap_filter_info.
-#
-# The keepout_filter plugin in each costmap subscribes to
-# /costmap_filter_info, learns where the mask is, and stamps lethal cost
-# into the costmap wherever the mask is "occupied".
-# ---------------------------------------------------------------------------
-
 costmap_filter_info_server:
   ros__parameters:
     use_sim_time: true
@@ -356,7 +349,6 @@ filter_mask_server:
     use_sim_time: true
     frame_id: "map"
     topic_name: "/keepout_filter_mask"
-    # Overwritten at launch by the `keepout_mask` arg via RewrittenYaml
-    # param_rewrites in fixed_navigation.launch.py. This default is a
-    # placeholder so the YAML parses cleanly when used standalone.
-    yaml_filename: "task2_keepout.yaml"
+    # Resolved from the `keepout_mask` launch argument via RewrittenYaml
+    # (allow_substs=True). Default is set in sim_turtlebot_nav.launch.py.
+    yaml_filename: "$(var keepout_mask)"

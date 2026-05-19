@@ -63,7 +63,7 @@ def generate_launch_description():
     nav2_launch = PathJoinSubstitution(
         [pkg_dis_tutorial3, 'launch', 'nav2.launch.py'])
     nav2_params_file = PathJoinSubstitution(
-        [pkg_dis_tutorial3, 'config', 'nav2.yaml'])
+        [package_dir_robot, 'config', 'nav2.yaml'])
 
     # Launch configurations
     namespace = LaunchConfiguration('namespace')

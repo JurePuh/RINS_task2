@@ -34,7 +34,6 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
-    keepout_mask = LaunchConfiguration('keepout_mask')
     use_composition = LaunchConfiguration('use_composition')
     container_name = LaunchConfiguration('container_name')
     container_name_full = (namespace, '/', container_name)
@@ -68,10 +67,7 @@ def generate_launch_description():
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
     # Create our own temporary YAML files that include substitutions
-    # 'yaml_filename' rewrite targets filter_mask_server (the only node in
-    # this stack with that parameter — map_server lives in the localization
-    # launch). Lets us pass the keepout mask path from the top-level launch.
-    param_substitutions = {'autostart': autostart, 'yaml_filename': keepout_mask}
+    param_substitutions = {'autostart': autostart}
 
     configured_params = ParameterFile(
         RewrittenYaml(
