@@ -15,6 +15,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/FaceDetect.msg"
   "msg/SubjectClear.msg"
   "msg/RingDetect.msg"
+  "msg/BarrelDetect.msg"
   "srv/ClassifyFace.srv"
   "srv/DetectAnomalies.srv"
   "srv/WallNormalAt.srv"

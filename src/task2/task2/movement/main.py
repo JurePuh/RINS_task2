@@ -2,7 +2,12 @@ import py_trees
 import py_trees_ros
 import rclpy
 
-from task2.movement.tree import attach_face_subscription, build_root
+from task2.movement.tree import (
+    attach_barrel_subscription,
+    attach_face_subscription,
+    attach_ring_subscription,
+    build_root,
+)
 
 
 # How often the tree ticks. 100 ms = 10 Hz.
@@ -37,6 +42,8 @@ def main() -> None:
     node = tree.node
 
     attach_face_subscription(node)
+    attach_ring_subscription(node)
+    attach_barrel_subscription(node)
 
     tree.tick_tock(period_ms=_TICK_PERIOD_MS)
 
