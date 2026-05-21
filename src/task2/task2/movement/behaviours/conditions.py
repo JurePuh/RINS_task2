@@ -6,14 +6,6 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 
 from task2.movement import blackboard as bb
 
-def _make_node_logger(beh, kwargs):
-    try:
-        node = kwargs["node"]
-    except KeyError as e:
-        raise KeyError(
-            f"{beh.qualified_name}: 'node' missing from setup kwargs"
-        ) from e
-    return node.get_logger()
 
 # --- ANOMALY TASKS ----
 
@@ -27,7 +19,7 @@ class _ActiveFlagPending(py_trees.behaviour.Behaviour):
         self.bb.register_key(key=flag_key, access=py_trees.common.Access.READ)
 
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = _make_node_logger(self, kwargs)
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
         if self.bb.get(self._flag_key):
@@ -56,7 +48,7 @@ class HasUnhandledPerson(py_trees.behaviour.Behaviour):
         self.bb.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.READ)
 
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = _make_node_logger(self, kwargs)
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
         queue = self.bb.get(bb.PENDING_PEOPLE)
@@ -78,7 +70,7 @@ class BarrelVisitPending(py_trees.behaviour.Behaviour):
         self.bb.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
 
     def setup(self, **kwargs):
-        self._log = _make_node_logger(self, kwargs)
+        self._log = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
         if self.bb.get(bb.BARREL_ACTIVE) and self.bb.get(bb.PENDING_BARRELS):
@@ -105,49 +97,4 @@ class RecomputeNotRequested(py_trees.behaviour.Behaviour):
     def update(self) -> py_trees.common.Status:
         if self.bb.get(self._flag_key):
             return py_trees.common.Status.FAILURE
-        return py_trees.common.Status.SUCCESS
-
-# --- UTILITIES ----
-
-class MarkExplorationDone(py_trees.behaviour.Behaviour):
-    """Sentinel: SUCCESS iff every queue is empty AND every asked-for task is done.
-
-    Sits as the last child of the Phase1 priority Selector. Until it succeeds
-    the Selector keeps cycling FollowPath; once it succeeds the parent
-    Mission Sequence advances to Phase 2.
-    """
-
-    def __init__(self, name: str = "MarkExplorationDone"):
-        super().__init__(name=name)
-        self.bb = self.attach_blackboard_client(name=self.name)
-        for key in (
-            bb.PENDING_PEOPLE,
-            bb.PENDING_BARRELS,
-            bb.TASK_INSPECT_BARRELS,
-            bb.TASK_ANOMALY_RED,
-            bb.TASK_ANOMALY_GREEN,
-            bb.EXPLORATION_DONE,
-        ):
-            self.bb.register_key(key=key, access=py_trees.common.Access.WRITE)
-
-    def setup(self, **kwargs):
-        self._log = _make_node_logger(self, kwargs)
-
-    def update(self) -> py_trees.common.Status:
-        if self.bb.get(bb.PENDING_PEOPLE):
-            return py_trees.common.Status.FAILURE
-        if self.bb.get(bb.PENDING_BARRELS):
-            return py_trees.common.Status.FAILURE
-
-        barrels = self.bb.get(bb.TASK_INSPECT_BARRELS)
-        if barrels.was_asked_for and barrels.pending_horizontal():
-            return py_trees.common.Status.FAILURE
-
-        for key in (bb.TASK_ANOMALY_RED, bb.TASK_ANOMALY_GREEN):
-            t = self.bb.get(key)
-            if t.pending():
-                return py_trees.common.Status.FAILURE
-
-        self.bb.set(bb.EXPLORATION_DONE, True)
-        self._log.info("exploration phase done — advancing to Phase 2")
         return py_trees.common.Status.SUCCESS
