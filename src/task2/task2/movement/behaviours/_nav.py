@@ -8,6 +8,7 @@ import tf2_ros
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.time import Time
+from rclpy.impl.rcutils_logger import RcutilsLogger
 
 from task2.movement.models import Pose, Point, Vector
 
@@ -29,10 +30,10 @@ def build_nav_goal(pose: Pose) -> NavigateToPose.Goal:
     return goal
 
 
-def standoff_goal_from_normal(point: Point, normal: Vector) -> NavigateToPose.Goal:
+def standoff_goal_from_normal(point: Point, normal: Vector, standoff: float = STANDOFF) -> NavigateToPose.Goal:
     """Given a point and a normal vector, compute a standoff goal a bit back along the normal."""
-    dest_x = point.x + STANDOFF * normal.x
-    dest_y = point.y + STANDOFF * normal.y
+    dest_x = point.x + standoff * normal.x
+    dest_y = point.y + standoff * normal.y
     theta = math.atan2(-normal.y, -normal.x)
     return build_nav_goal(Pose(dest_x, dest_y, theta))
 
@@ -49,7 +50,7 @@ def standoff_goal_from_robot(robot: Point, target: Point) -> NavigateToPose.Goal
     return build_nav_goal(Pose(dest_x, dest_y, theta))
 
 
-def lookup_robot_xy(tf_buffer: tf2_ros.Buffer, logger) -> tuple[float, float] | None:
+def lookup_robot_xy(tf_buffer: tf2_ros.Buffer, logger: RcutilsLogger) -> tuple[float, float] | None:
     try:
         t = tf_buffer.lookup_transform("map", "base_link", Time())
     except Exception as exc:
@@ -58,7 +59,7 @@ def lookup_robot_xy(tf_buffer: tf2_ros.Buffer, logger) -> tuple[float, float] | 
     return (t.transform.translation.x, t.transform.translation.y)
 
 
-def _log_pose(logger, name: str, goal: NavigateToPose.Goal) -> None:
+def _log_pose(logger: RcutilsLogger, name: str, goal: NavigateToPose.Goal) -> None:
     """Log the (x, y, θ) pose from a NavigateToPose.Goal."""
     pos = goal.pose.pose.position
     q = goal.pose.pose.orientation
@@ -82,7 +83,7 @@ class LoggingNavWaypoint(py_trees_ros.action_clients.FromConstant):
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        self._ros_logger = kwargs["node"].get_logger()
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def initialise(self):
         super().initialise()
@@ -103,7 +104,7 @@ class NavigateToBlackboardGoal(py_trees_ros.action_clients.FromBlackboard):
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        self._ros_logger = kwargs["node"].get_logger()
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def initialise(self):
         super().initialise()

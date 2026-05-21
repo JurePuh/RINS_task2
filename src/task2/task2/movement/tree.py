@@ -36,10 +36,10 @@ from task2.movement.behaviours import (
     go_to_face,
 )
 from task2.movement.behaviours.conditions import (
-    GreenAnomalyTaskPending,
-    HasUnvisitedHorizontalBarrel,
+    AnomalyGreenActive,
+    BarrelVisitPending,
     MarkExplorationDone,
-    RedAnomalyTaskPending,
+    AnomalyRedActive,
 )
 from task2.movement.behaviours.face_conditions import HasUnhandledFace, MarkFaceHandled
 from task2.movement.models import (
@@ -55,12 +55,12 @@ def _seed_blackboard() -> None:
     """Initial values for every blackboard key — must happen before first tick."""
     w = py_trees.blackboard.Client(name="bootstrap")
     keys = [
-        bb.PENDING_FACES, bb.HANDLED_FACES, bb.RECOMPUTE_DESTINATION,
+        bb.PENDING_FACES, bb.HANDLED_FACES, bb.RECOMPUTE_FACE_DESTINATION,
         bb.ACTIVE_PERSON, bb.CONVERSATION_RESULT,
         bb.TASK_COUNT_RINGS, bb.TASK_INSPECT_BARRELS,
         bb.TASK_ANOMALY_RED, bb.TASK_ANOMALY_GREEN,
-        bb.PENDING_BARRELS, bb.ACTIVE_BARREL,
-        bb.ACTIVE_ANOMALY_RED, bb.ACTIVE_ANOMALY_GREEN,
+        bb.PENDING_BARRELS, bb.BARREL_ACTIVE,
+        bb.ANOMALY_RED_ACTIVE, bb.ANOMALY_GREEN_ACTIVE,
         bb.EXPLORATION_DONE,
     ]
     for k in keys:
@@ -68,7 +68,7 @@ def _seed_blackboard() -> None:
 
     w.set(bb.PENDING_FACES, deque())
     w.set(bb.HANDLED_FACES, set())
-    w.set(bb.RECOMPUTE_DESTINATION, False)
+    w.set(bb.RECOMPUTE_FACE_DESTINATION, False)
     w.set(bb.ACTIVE_PERSON, None)
     w.set(bb.CONVERSATION_RESULT, "")
     w.set(bb.TASK_COUNT_RINGS, CountRingsTask())
@@ -76,21 +76,21 @@ def _seed_blackboard() -> None:
     w.set(bb.TASK_ANOMALY_RED, AnomalyTask())
     w.set(bb.TASK_ANOMALY_GREEN, AnomalyTask())
     w.set(bb.PENDING_BARRELS, deque())
-    w.set(bb.ACTIVE_BARREL, None)
-    w.set(bb.ACTIVE_ANOMALY_RED, False)
-    w.set(bb.ACTIVE_ANOMALY_GREEN, False)
+    w.set(bb.BARREL_ACTIVE, None)
+    w.set(bb.ANOMALY_RED_ACTIVE, False)
+    w.set(bb.ANOMALY_GREEN_ACTIVE, False)
     w.set(bb.EXPLORATION_DONE, False)
 
 
 def _build_phase1() -> py_trees.composites.Selector:
     run_red = py_trees.composites.Sequence(name="RunAnomalyRed", memory=True)
-    run_red.add_children([RedAnomalyTaskPending(), anomaly.build_red()])
+    run_red.add_children([AnomalyRedActive(), anomaly.build_red()])
 
     run_green = py_trees.composites.Sequence(name="RunAnomalyGreen", memory=True)
-    run_green.add_children([GreenAnomalyTaskPending(), anomaly.build_green()])
+    run_green.add_children([AnomalyGreenActive(), anomaly.build_green()])
 
     visit_barrel = py_trees.composites.Sequence(name="VisitHorizontalBarrel", memory=True)
-    visit_barrel.add_children([HasUnvisitedHorizontalBarrel(), barrel.build()])
+    visit_barrel.add_children([BarrelVisitPending(), barrel.build()])
 
     approach_face = py_trees.composites.Sequence(name="ApproachUnhandledFace", memory=True)
     approach_face.add_children([
@@ -133,7 +133,7 @@ def attach_face_subscription(node: rclpy.node.Node) -> None:
     reader = py_trees.blackboard.Client(name="face_subscription")
     reader.register_key(key=bb.PENDING_FACES, access=py_trees.common.Access.READ)
     reader.register_key(key=bb.HANDLED_FACES, access=py_trees.common.Access.READ)
-    reader.register_key(key=bb.RECOMPUTE_DESTINATION, access=py_trees.common.Access.WRITE)
+    reader.register_key(key=bb.RECOMPUTE_FACE_DESTINATION, access=py_trees.common.Access.WRITE)
 
     def on_face(msg: FaceDetect) -> None:
         pending = reader.get(bb.PENDING_FACES)
@@ -147,7 +147,7 @@ def attach_face_subscription(node: rclpy.node.Node) -> None:
             if f.id == msg.id:
                 pending[i] = msg
                 if i == 0:
-                    reader.set(bb.RECOMPUTE_DESTINATION, True)
+                    reader.set(bb.RECOMPUTE_FACE_DESTINATION, True)
                 node.get_logger().info(
                     f"updated face {msg.id} location to ({msg.x:.2f}, {msg.y:.2f})"
                 )
