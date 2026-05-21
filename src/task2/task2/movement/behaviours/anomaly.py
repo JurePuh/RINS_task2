@@ -5,13 +5,9 @@ count. The "is this color currently active" flag is set elsewhere (face
 interaction); this module only consumes it and clears it on completion.
 """
 
-import time
-
 import py_trees
 import py_trees_ros
 from nav2_msgs.action import DriveOnHeading, Spin
-from std_msgs.msg import String
-from rclpy.publisher import Publisher
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.client import Client
 from rclpy.task import Future
@@ -19,6 +15,7 @@ from rclpy.task import Future
 from msg_types.srv import DetectAnomalies
 
 from task2.movement import blackboard as bb
+from task2.movement.behaviours._arm import SetArmPosition
 from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
 from task2.movement.behaviours.follow_path import Pose
 from task2.movement.models import Tile, AnomalyTask
@@ -33,8 +30,6 @@ _RED_TILE_COUNT = 4
 _GREEN_TILE_COUNT = 5
 
 _TILE_STEP_M = 0.3  # forward step between tiles
-
-_ARM_SETTLE_SEC = 1.0
 
 
 _TASK_KEY_BY_COLOR = {
@@ -78,37 +73,6 @@ class AlignToBelt(py_trees_ros.action_clients.FromConstant):
     def initialise(self):
         super().initialise()
         self._ros_logger.info(f"{self.name}: spin +90deg")
-
-
-class SetArmPosition(py_trees.behaviour.Behaviour):
-    """Publish an arm pose name on /arm_command, then RUNNING for ~1s to settle."""
-
-    def __init__(self, pose_string: str, name: str | None = None):
-        super().__init__(name=name or f"SetArmPosition({pose_string})")
-        self._pose_string = pose_string
-        self._deadline: float | None = None
-
-    def setup(self, **kwargs):
-        node = kwargs["node"]
-        self._ros_logger: RcutilsLogger = node.get_logger()
-        self._publisher: Publisher = node.create_publisher(String, "/arm_command", 10)
-
-    def initialise(self):
-        msg = String()
-        msg.data = self._pose_string
-        self._publisher.publish(msg)
-        self._ros_logger.info(f"{self.name}: published '{self._pose_string}'")
-        # To make the node "running" for a bit, while arm adjusts
-        self._deadline = time.monotonic() + _ARM_SETTLE_SEC
-
-    def update(self) -> py_trees.common.Status:
-        # Return "RUNNING" until the settle time has passed, then "SUCCESS"
-        if self._deadline is None or time.monotonic() >= self._deadline:
-            return py_trees.common.Status.SUCCESS
-        return py_trees.common.Status.RUNNING
-
-    def terminate(self, new_status):
-        self._deadline = None
 
 
 _BROKEN_BY_RESULT = {
