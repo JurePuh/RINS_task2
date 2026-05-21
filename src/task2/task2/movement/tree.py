@@ -1,26 +1,11 @@
 from collections import deque
-
 import py_trees
-import py_trees_ros
-import rclpy.node
 
+import rclpy.node
 from msg_types.msg import FaceDetect, RingDetect, BarrelDetect
 
 from task2.movement import blackboard as bb
-from task2.movement.behaviours import (
-    anomaly,
-    barrel,
-    exit_phase,
-    follow_path,
-    person,
-)
-from task2.movement.behaviours.conditions import (
-    AnomalyGreenActive,
-    AnomalyRedActive,
-    BarrelVisitPending,
-    HasUnhandledPerson,
-    MarkExplorationDone,
-)
+from task2.movement.behaviours import room1, room2
 from task2.movement.models import (
     AnomalyTask,
     Barrel,
@@ -42,7 +27,6 @@ def _seed_blackboard() -> None:
         bb.TASK_ANOMALY_RED, bb.TASK_ANOMALY_GREEN,
         bb.PENDING_BARRELS, bb.BARREL_ACTIVE,
         bb.ANOMALY_RED_ACTIVE, bb.ANOMALY_GREEN_ACTIVE,
-        bb.EXPLORATION_DONE,
     ]
     for k in keys:
         w.register_key(key=k, access=py_trees.common.Access.WRITE)
@@ -60,32 +44,6 @@ def _seed_blackboard() -> None:
     w.set(bb.BARREL_ACTIVE, None)
     w.set(bb.ANOMALY_RED_ACTIVE, False)
     w.set(bb.ANOMALY_GREEN_ACTIVE, False)
-    w.set(bb.EXPLORATION_DONE, False)
-
-
-def _build_phase1() -> py_trees.composites.Selector:
-    run_red = py_trees.composites.Sequence(name="RunAnomalyRed", memory=True)
-    run_red.add_children([AnomalyRedActive(), anomaly.build_red()])
-
-    run_green = py_trees.composites.Sequence(name="RunAnomalyGreen", memory=True)
-    run_green.add_children([AnomalyGreenActive(), anomaly.build_green()])
-
-    visit_barrel = py_trees.composites.Sequence(name="VisitHorizontalBarrel", memory=True)
-    visit_barrel.add_children([BarrelVisitPending(), barrel.build()])
-
-    approach_face = py_trees.composites.Sequence(name="ApproachUnhandledPerson", memory=True)
-    approach_face.add_children([HasUnhandledPerson(), person.build()])
-
-    phase1 = py_trees.composites.Selector(name="Phase1", memory=False)
-    phase1.add_children([
-        run_red,
-        run_green,
-        visit_barrel,
-        approach_face,
-        follow_path.build(),
-        MarkExplorationDone(),
-    ])
-    return phase1
 
 
 def build_root() -> py_trees.behaviour.Behaviour:
@@ -93,17 +51,14 @@ def build_root() -> py_trees.behaviour.Behaviour:
 
     mission = py_trees.composites.Sequence(name="Mission", memory=True)
     mission.add_children([
-        _build_phase1(),
-        exit_phase.build(),
-        exit_phase.FinalDance(),
+        room1.build(),
+        room2.build(),
+        room2.FinalDance(),
     ])
     return mission
 
 
-# ---------------------------------------------------------------------------
-# Subscriptions — same reasoning as before: plain rclpy callbacks, not tree
-# behaviours, so we don't drop bursts that arrive between ticks.
-# ---------------------------------------------------------------------------
+# --- Subscriptions to ROS topics, to update blackboard state from sensors ---
 
 def attach_person_subscription(node: rclpy.node.Node) -> None:
     logger = node.get_logger()

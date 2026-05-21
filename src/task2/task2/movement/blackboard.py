@@ -28,6 +28,3 @@ RECOMPUTE_BARREL_DESTINATION = "/recompute_barrel_destination" # Flag that updat
 ANOMALY_RED_ACTIVE = "/anomaly_red_active"     # True while the red anomaly sequence is running
 ANOMALY_GREEN_ACTIVE = "/anomaly_green_active" # True while the green anomaly sequence is running
 ANOMALY_DESTINATION = "/anomaly_destination" # Goal we need to go to in order to inspect the next anomaly
-
-# --- Mission control ---------------------------------------------------------
-EXPLORATION_DONE = "/exploration_done" # Flag to note when we are done with the first room

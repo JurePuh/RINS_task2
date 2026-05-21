@@ -1,10 +1,9 @@
 """FollowPath behaviour: drive the robot through a hardcoded waypoint list.
 """
 
-from dataclasses import dataclass
-
 import py_trees
 
+from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
 from task2.movement.models import Pose
 
