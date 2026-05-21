@@ -4,7 +4,7 @@ import rclpy
 
 from task2.movement.tree import (
     attach_barrel_subscription,
-    attach_face_subscription,
+    attach_person_subscription,
     attach_ring_subscription,
     build_root,
 )
@@ -41,7 +41,7 @@ def main() -> None:
     assert tree.node is not None, "tree.node must be set after setup()"
     node = tree.node
 
-    attach_face_subscription(node)
+    attach_person_subscription(node)
     attach_ring_subscription(node)
     attach_barrel_subscription(node)
 

@@ -3,12 +3,11 @@ py_trees prefixes keys with '/' to namespace them; we follow that convention.
 """
 
 # --- Faces --------------------------------------------------------
-PENDING_FACES = "/pending_faces" # deque[Face] of newly-seen faces that still need talking to.
-HANDLED_FACES = "/handled_faces" # set[Face] of faces we've already talked to.
+PENDING_PEOPLE = "/pending_people" # deque[Person] of newly-seen people that still need talking to.
+HANDLED_PEOPLE = "/handled_people" # set[Person] of people we've already talked to.
 FACE_DESTINATION = "/face_destination" # Goal we need to go to in order to talk to the next face
 RECOMPUTE_FACE_DESTINATION = "/recompute_face_destination" # Flag that updated cordinates of current destination arrived.
 
-ACTIVE_PERSON = "/active_person" # Person currently being talked to
 CONVERSATION_RESULT = "/conversation_result" # Task the person requested. Values: "count_rings" | "inspect_barrels" | "anomaly_red" | "anomaly_green" | ""
 
 # --- Task singletons ---------------------------------------------------------

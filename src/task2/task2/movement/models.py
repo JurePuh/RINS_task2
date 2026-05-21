@@ -68,10 +68,10 @@ class Gender(Enum):
 @dataclass
 class Person:
     point: Point
-    name: str
-    role: str
-    gender: Gender
     face_id: str
+    name: str = ""
+    role: str = ""
+    gender: Gender | None = None
 
     @property
     def x(self) -> float:

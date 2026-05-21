@@ -2,6 +2,8 @@
 
 import py_trees
 
+from rclpy.impl.rcutils_logger import RcutilsLogger
+
 from task2.movement import blackboard as bb
 
 def _make_node_logger(beh, kwargs):
@@ -25,7 +27,7 @@ class _ActiveFlagPending(py_trees.behaviour.Behaviour):
         self.bb.register_key(key=flag_key, access=py_trees.common.Access.READ)
 
     def setup(self, **kwargs):
-        self._log = _make_node_logger(self, kwargs)
+        self._ros_logger: RcutilsLogger = _make_node_logger(self, kwargs)
 
     def update(self) -> py_trees.common.Status:
         if self.bb.get(self._flag_key):
@@ -41,6 +43,28 @@ class AnomalyRedActive(_ActiveFlagPending):
 class AnomalyGreenActive(_ActiveFlagPending):
     def __init__(self, name: str = "GreenAnomalyTaskPending"):
         super().__init__(name=name, flag_key=bb.ANOMALY_GREEN_ACTIVE)
+
+
+# --- FACE TASKS ----
+
+class HasUnhandledPerson(py_trees.behaviour.Behaviour):
+    """SUCCESS iff the pending_people queue is non-empty."""
+
+    def __init__(self, name: str = "HasUnhandledPerson"):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=self.name)
+        self.bb.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.READ)
+
+    def setup(self, **kwargs):
+        self._ros_logger: RcutilsLogger = _make_node_logger(self, kwargs)
+
+    def update(self) -> py_trees.common.Status:
+        queue = self.bb.get(bb.PENDING_PEOPLE)
+        if queue:
+            self._ros_logger.debug(f"{len(queue)} pending faces in queue")
+            return py_trees.common.Status.SUCCESS
+        return py_trees.common.Status.FAILURE
+
 
 # --- BARREL TASKS ----
 
@@ -83,6 +107,7 @@ class RecomputeNotRequested(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.FAILURE
         return py_trees.common.Status.SUCCESS
 
+# --- UTILITIES ----
 
 class MarkExplorationDone(py_trees.behaviour.Behaviour):
     """Sentinel: SUCCESS iff every queue is empty AND every asked-for task is done.
@@ -96,7 +121,7 @@ class MarkExplorationDone(py_trees.behaviour.Behaviour):
         super().__init__(name=name)
         self.bb = self.attach_blackboard_client(name=self.name)
         for key in (
-            bb.PENDING_FACES,
+            bb.PENDING_PEOPLE,
             bb.PENDING_BARRELS,
             bb.TASK_INSPECT_BARRELS,
             bb.TASK_ANOMALY_RED,
@@ -109,7 +134,7 @@ class MarkExplorationDone(py_trees.behaviour.Behaviour):
         self._log = _make_node_logger(self, kwargs)
 
     def update(self) -> py_trees.common.Status:
-        if self.bb.get(bb.PENDING_FACES):
+        if self.bb.get(bb.PENDING_PEOPLE):
             return py_trees.common.Status.FAILURE
         if self.bb.get(bb.PENDING_BARRELS):
             return py_trees.common.Status.FAILURE
