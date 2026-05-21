@@ -98,9 +98,11 @@ class SetArmPosition(py_trees.behaviour.Behaviour):
         msg.data = self._pose_string
         self._publisher.publish(msg)
         self._ros_logger.info(f"{self.name}: published '{self._pose_string}'")
+        # To make the node "running" for a bit, while arm adjusts
         self._deadline = time.monotonic() + _ARM_SETTLE_SEC
 
     def update(self) -> py_trees.common.Status:
+        # Return "RUNNING" until the settle time has passed, then "SUCCESS"
         if self._deadline is None or time.monotonic() >= self._deadline:
             return py_trees.common.Status.SUCCESS
         return py_trees.common.Status.RUNNING
@@ -133,6 +135,7 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
         self._client: Client = node.create_client(DetectAnomalies, "/detect_anomalies")
 
     def initialise(self):
+        # Call service to detect anomaly in tile
         self._future = self._client.call_async(DetectAnomalies.Request())
 
     def update(self) -> py_trees.common.Status:
@@ -141,6 +144,7 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
         if not self._future.done():
             return py_trees.common.Status.RUNNING
 
+        # Update the task with the result
         result_str = self._future.result().result # type: ignore
         broken = _BROKEN_BY_RESULT.get(result_str)
         task: AnomalyTask = self.bb.get(self._task_key)

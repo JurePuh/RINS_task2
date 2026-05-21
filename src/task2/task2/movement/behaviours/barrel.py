@@ -101,6 +101,7 @@ class TurnTowardsBarrel(py_trees_ros.action_clients.FromConstant):
         super().setup(**kwargs)
         self.node = kwargs["node"]
         self._ros_logger: RcutilsLogger = self.node.get_logger()
+        # Set up TF listener for robot and barrel poses
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self.node)
 
@@ -121,6 +122,7 @@ class TurnTowardsBarrel(py_trees_ros.action_clients.FromConstant):
             self._skip = True
             return
 
+        # Compute target_yaw to face the barrel from the robot's current pose
         rx = t.transform.translation.x
         ry = t.transform.translation.y
         q = t.transform.rotation
@@ -135,6 +137,7 @@ class TurnTowardsBarrel(py_trees_ros.action_clients.FromConstant):
     def update(self):
         if self._skip:
             return py_trees.common.Status.SUCCESS
+        # Return status of spin
         return super().update()
 
 
@@ -156,6 +159,8 @@ class CheckBarrelLeak(py_trees.behaviour.Behaviour):
         queue = self.bb.get(bb.PENDING_BARRELS)
         assert queue is not None, "CheckBarrelLeak: PENDING_BARRELS not found on blackboard"
         barrel: Barrel = queue[0]
+
+        # Set barrel as not leaking (for now)
         barrel.leaking = False
         self._ros_logger.info(f"[stub] barrel {barrel.id} marked not-leaking")
         return py_trees.common.Status.SUCCESS
@@ -175,6 +180,8 @@ class ClearActiveBarrel(py_trees.behaviour.Behaviour):
     def update(self) -> py_trees.common.Status:
         queue = self.bb.get(bb.PENDING_BARRELS)
         assert queue is not None, "ClearActiveBarrel: PENDING_BARRELS not found on blackboard"
+        
+        # Remove seen barrel
         barrel: Barrel = queue.popleft()
         self._ros_logger.info(f"cleared barrel {barrel.id} from queue")
         return py_trees.common.Status.SUCCESS
