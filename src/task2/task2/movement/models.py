@@ -67,10 +67,19 @@ class Gender(Enum):
 
 @dataclass
 class Person:
+    point: Point
     name: str
     role: str
     gender: Gender
     face_id: str
+
+    @property
+    def x(self) -> float:
+        return self.point.x
+    
+    @property
+    def y(self) -> float:
+        return self.point.y
 
 
 @dataclass

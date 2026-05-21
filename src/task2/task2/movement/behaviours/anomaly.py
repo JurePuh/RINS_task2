@@ -42,8 +42,8 @@ _TASK_KEY_BY_COLOR = {
     "green": bb.TASK_ANOMALY_GREEN,
 }
 _ACTIVE_KEY_BY_COLOR = {
-    "red": bb.ACTIVE_ANOMALY_RED,
-    "green": bb.ACTIVE_ANOMALY_GREEN,
+    "red": bb.ANOMALY_RED_ACTIVE,
+    "green": bb.ANOMALY_GREEN_ACTIVE,
 }
 
 
@@ -71,11 +71,9 @@ class AlignToBelt(py_trees_ros.action_clients.FromConstant):
             action_goal=goal,
         )
 
-        self._ros_logger: RcutilsLogger
-
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        self._ros_logger = kwargs["node"].get_logger()
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def initialise(self):
         super().initialise()
@@ -88,14 +86,12 @@ class SetArmPosition(py_trees.behaviour.Behaviour):
     def __init__(self, pose_string: str, name: str | None = None):
         super().__init__(name=name or f"SetArmPosition({pose_string})")
         self._pose_string = pose_string
-        self._publisher: Publisher
-        self._ros_logger: RcutilsLogger
         self._deadline: float | None = None
 
     def setup(self, **kwargs):
         node = kwargs["node"]
-        self._ros_logger = node.get_logger()
-        self._publisher = node.create_publisher(String, "/arm_command", 10)
+        self._ros_logger: RcutilsLogger = node.get_logger()
+        self._publisher: Publisher = node.create_publisher(String, "/arm_command", 10)
 
     def initialise(self):
         msg = String()
@@ -129,14 +125,12 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
         self._task_key = _TASK_KEY_BY_COLOR[color]
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=self._task_key, access=py_trees.common.Access.READ)
-        self._ros_logger: RcutilsLogger
-        self._client: Client
         self._future: Future | None = None
 
     def setup(self, **kwargs):
         node = kwargs["node"]
-        self._ros_logger = node.get_logger()
-        self._client = node.create_client(DetectAnomalies, "/detect_anomalies")
+        self._ros_logger: RcutilsLogger = node.get_logger()
+        self._client: Client = node.create_client(DetectAnomalies, "/detect_anomalies")
 
     def initialise(self):
         self._future = self._client.call_async(DetectAnomalies.Request())
@@ -180,11 +174,9 @@ class MoveToNextTile(py_trees_ros.action_clients.FromConstant):
             action_goal=goal,
         )
 
-        self._ros_logger: RcutilsLogger
-
     def setup(self, **kwargs):
         super().setup(**kwargs)
-        self._ros_logger = kwargs["node"].get_logger()
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def initialise(self):
         super().initialise()
@@ -201,10 +193,8 @@ class MarkAnomalyInactive(py_trees.behaviour.Behaviour):
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=self._flag_key, access=py_trees.common.Access.WRITE)
 
-        self._ros_logger: RcutilsLogger
-
     def setup(self, **kwargs):
-        self._ros_logger = kwargs["node"].get_logger()
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
         self.bb.set(self._flag_key, False)
