@@ -1,4 +1,4 @@
-"""Room 2: exit corridor, blue-line following, CEO check, report, final dance."""
+"""Room 2: exit corridor, blue-line following, CTO check, report, final dance."""
 
 import math
 
@@ -11,11 +11,15 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.publisher import Publisher
 from std_msgs.msg import String
 
+from rclpy.node import Node
+from rclpy.task import Future
+
 from msg_types.msg import BlueLineStatus
+from msg_types.srv import ClassifyFace
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._arm import SetArmPosition
-from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
+from task2.movement.behaviours._nav import LoggingNavWaypoint, SERVICE_TIMEOUT_SEC, build_nav_goal
 from task2.movement.models import Pose
 
 
@@ -27,7 +31,7 @@ _END_FRAMES = 10       # consecutive STATE_LOST frames after first LINE → done
 
 _END_LINE = "All anomalies inspected. I'd take a bow but I don't have hips."
 
-_MAX_CEO_ATTEMPTS = 8  # follow-line + check tries before giving up
+_MAX_CTO_ATTEMPTS = 8  # follow-line + check tries before giving up
 
 
 class GoToCorridorEntrance(LoggingNavWaypoint):
@@ -111,18 +115,57 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         self._cmd_pub.publish(stop)
 
 
-class CheckIfAtCEO(py_trees.behaviour.Behaviour):
-    """[TODO] SUCCESS if we ended up in front of the CEO, FAILURE otherwise."""
+class CheckIfAtCTO(py_trees.behaviour.Behaviour):
+    """Call /classify_face; SUCCESS iff the returned role is 'cto'."""
 
-    def __init__(self, name: str = "CheckIfAtCEO"):
+    def __init__(self, name: str = "CheckIfAtCTO"):
         super().__init__(name=name)
+        self._future: Future | None = None
+        self._start_time: float = 0.0
 
     def setup(self, **kwargs):
-        self._log = kwargs["node"].get_logger()
+        self._node: Node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
+        self._client = self._node.create_client(ClassifyFace, "classify_face")
+
+    def initialise(self):
+        self._future = self._client.call_async(ClassifyFace.Request())
+        self._start_time = self._node.get_clock().now().nanoseconds * 1e-9
 
     def update(self) -> py_trees.common.Status:
-        self._log.info("[TODO] CheckIfAtCEO -> assuming FAILURE")
-        return py_trees.common.Status.FAILURE
+        if self._future is None:
+            return py_trees.common.Status.FAILURE
+
+        if not self._future.done():
+            now = self._node.get_clock().now().nanoseconds * 1e-9
+            if now - self._start_time < SERVICE_TIMEOUT_SEC:
+                return py_trees.common.Status.RUNNING
+            self._ros_logger.warning("CheckIfAtCTO: classify_face timed out")
+            return py_trees.common.Status.FAILURE
+
+        resp: ClassifyFace.Response = self._future.result()  # type: ignore
+        if resp is None or not getattr(resp, "success", False):
+            self._ros_logger.info(
+                f"CheckIfAtCTO: classify_face failed: {getattr(resp, 'message', '?')}"
+            )
+            return py_trees.common.Status.FAILURE
+
+        role = (resp.role or "").lower()
+        self._ros_logger.info(f"CheckIfAtCTO: role='{resp.role}' name='{resp.name}'")
+        return (
+            py_trees.common.Status.SUCCESS
+            if role == "cto"
+            else py_trees.common.Status.FAILURE
+        )
+
+    def terminate(self, new_status):
+        if (
+            new_status == py_trees.common.Status.INVALID
+            and self._future is not None
+            and not self._future.done()
+        ):
+            self._future.cancel()
+        self._future = None
 
 
 class UTurn(py_trees_ros.action_clients.FromConstant):
@@ -234,29 +277,29 @@ def FinalDance(name: str = "FinalDance") -> py_trees.composites.Sequence:
 
 
 def build() -> py_trees.composites.Sequence:
-    """Room 2: corridor → arm down → (follow line, check CEO, U-turn on miss)* → report."""
-    # On a failed CEO check, run UTurn but report FAILURE so the Retry loop
+    """Room 2: corridor → arm down → (follow line, check CTO, U-turn on miss)* → report."""
+    # On a failed CTO check, run UTurn but report FAILURE so the Retry loop
     # restarts FollowBlueLine. Inverter flips UTurn's SUCCESS → FAILURE.
-    check_or_turn = py_trees.composites.Selector(name="CEOorUTurn", memory=False)
+    check_or_turn = py_trees.composites.Selector(name="CTOorUTurn", memory=True)
     check_or_turn.add_children([
-        CheckIfAtCEO(),
-        py_trees.decorators.Inverter(name="UTurnThenRetry", child=UTurn()),
+        CheckIfAtCTO(),
+        py_trees.decorators.SuccessIsFailure(name="UTurnThenRetry", child=UTurn()),
     ])
 
     loop_body = py_trees.composites.Sequence(name="FollowAndCheck", memory=True)
     loop_body.add_children([FollowBlueLine(), check_or_turn])
 
-    ceo_loop = py_trees.decorators.Retry(
-        name="UntilAtCEO",
+    cto_loop = py_trees.decorators.Retry(
+        name="UntilAtCTO",
         child=loop_body,
-        num_failures=_MAX_CEO_ATTEMPTS,
+        num_failures=_MAX_CTO_ATTEMPTS,
     )
 
     seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
         GoToCorridorEntrance(),
         SetArmPosition("look_for_qr"),
-        ceo_loop,
+        cto_loop,
         GenerateReport(),
     ])
     return seq
