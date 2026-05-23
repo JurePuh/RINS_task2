@@ -54,7 +54,7 @@ class DetectRings(Node):
         # --- Publish / acceptance ---
         self.accept_threshold: int = 5
         self.dedup_distance: float = 0.4
-        self.republish_move_threshold: float = 0.02
+        self.republish_move_threshold: float = 0.05
 
         # --- Contour / ellipse geometry (kept for tuning continuity) ---
         self.min_contour_area: float = 80.0

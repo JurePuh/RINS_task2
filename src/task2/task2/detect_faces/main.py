@@ -91,7 +91,7 @@ class detect_faces(Node):
         self.accepted_faces: list[Face] = []
         self.id_counter: int = 0
         self.accept_threshold: int = 10
-        self.republish_threshold: float = 0.02
+        self.republish_threshold: float = 0.05
 
         self._logger.info(
             f"detect_faces started (device='{self.device}', accept_threshold={self.accept_threshold})"
