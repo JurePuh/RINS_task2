@@ -20,3 +20,4 @@ src/task2/task2/anomaly_detection/ssn/model/__pycache__/*
 src/task2/task2/anomaly_detection/__pycache__/*
 src/task2/task2/anomaly_detection/ssn/common/__pycache__/*
 src/task2/task2/anomaly_detection/ssn/__pycache__/*
+src/task2/task2/blue_line/__pycache__/*
