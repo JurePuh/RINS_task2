@@ -2,6 +2,7 @@
 """
 
 import py_trees
+from py_trees.common import OneShotPolicy
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
@@ -24,8 +25,13 @@ def build(path: list[Pose] | None = None) -> py_trees.composites.Sequence:
 
     seq = py_trees.composites.Sequence(name="FollowPath", memory=True)
     for i, p in enumerate(waypoints):
-        seq.add_child(LoggingNavWaypoint(
+        wp = LoggingNavWaypoint(
             name=f"WP{i}({p.x:.2f},{p.y:.2f})",
             action_goal=build_nav_goal(p),
+        )
+        seq.add_child(py_trees.decorators.OneShot(
+            name=f"Once[WP{i}]",
+            child=wp,
+            policy=OneShotPolicy.ON_SUCCESSFUL_COMPLETION,
         ))
     return seq
