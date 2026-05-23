@@ -186,8 +186,8 @@ class detect_faces(Node):
 
 
             # face classifier
-            face_embedding = self.embed_face(cropped_face)
-            self._logger.info(f"face_embedding")
+            # face_embedding = self.embed_face(cropped_face)
+            # self._logger.info(f"face_embedding")
 
 
 

@@ -28,12 +28,19 @@ def build() -> py_trees.composites.Selector:
     approach_face = py_trees.composites.Sequence(name="ApproachUnhandledPerson", memory=True)
     approach_face.add_children([HasUnhandledPerson(), person.build()])
 
+    # Wrap interruption branches so their SUCCESS becomes FAILURE
+    # Only follow_path can return SUCCESS, which allows the Selector to move on to room2
+    def _no_exit(child):
+        return py_trees.decorators.SuccessIsFailure(
+            name=f"NoExit({child.name})", child=child,
+        )
+
     room1 = py_trees.composites.Selector(name="Room1", memory=False)
     room1.add_children([
-        run_red,
-        run_green,
-        visit_barrel,
-        approach_face,
+        _no_exit(run_red),
+        _no_exit(run_green),
+        _no_exit(visit_barrel),
+        _no_exit(approach_face),
         follow_path.build(),
     ])
     return room1

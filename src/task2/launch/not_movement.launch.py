@@ -33,4 +33,10 @@ def generate_launch_description():
             name='map_query',
             output='screen',
         ),
+        Node(
+            package='dis_tutorial7',
+            executable='arm_mover_actions.py',
+            name='arm_mover_actions',
+            output='screen',
+        ),
     ])

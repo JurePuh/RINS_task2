@@ -31,19 +31,18 @@ def _seed_blackboard() -> None:
     for k in keys:
         w.register_key(key=k, access=py_trees.common.Access.WRITE)
 
-    # TODO: Should have default-constants set at top for debugging and testing
-    w.set(bb.PENDING_PEOPLE, deque())
-    w.set(bb.HANDLED_PEOPLE, set())
-    w.set(bb.RECOMPUTE_FACE_DESTINATION, False)
-    w.set(bb.CONVERSATION_RESULT, "")
-    w.set(bb.TASK_COUNT_RINGS, CountRingsTask())
-    w.set(bb.TASK_INSPECT_BARRELS, InspectBarrelsTask())
-    w.set(bb.TASK_ANOMALY_RED, AnomalyTask())
-    w.set(bb.TASK_ANOMALY_GREEN, AnomalyTask())
-    w.set(bb.PENDING_BARRELS, deque())
-    w.set(bb.BARREL_ACTIVE, None)
-    w.set(bb.ANOMALY_RED_ACTIVE, False)
-    w.set(bb.ANOMALY_GREEN_ACTIVE, False)
+    w.set(bb.PENDING_PEOPLE, deque()) # deque() 
+    w.set(bb.HANDLED_PEOPLE, set()) # set()
+    w.set(bb.RECOMPUTE_FACE_DESTINATION, False) # False
+    w.set(bb.CONVERSATION_RESULT, "") # "" (empty string)
+    w.set(bb.TASK_COUNT_RINGS, CountRingsTask()) # CountRingsTask() 
+    w.set(bb.TASK_INSPECT_BARRELS, InspectBarrelsTask()) # InspectBarrelsTask() 
+    w.set(bb.TASK_ANOMALY_RED, AnomalyTask()) # AnomalyTask() 
+    w.set(bb.TASK_ANOMALY_GREEN, AnomalyTask()) # AnomalyTask() 
+    w.set(bb.PENDING_BARRELS, deque()) # deque()
+    w.set(bb.BARREL_ACTIVE, None) # None
+    w.set(bb.ANOMALY_RED_ACTIVE, False) # False
+    w.set(bb.ANOMALY_GREEN_ACTIVE, False) # False
 
 
 def build_root() -> py_trees.behaviour.Behaviour:

@@ -19,7 +19,7 @@ from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
 from task2.movement.models import Pose
 
 
-_CORRIDOR_ENTRANCE_POSE = Pose(x=0.0, y=0.0, theta=0.0)  # TODO: set real coords
+_CORRIDOR_ENTRANCE_POSE = Pose( 2.8, -0.2, -1.5)
 
 _FWD_SPEED = 0.15      # m/s forward while following the line
 _KP = 0.8              # proportional gain: angular.z = -_KP * offset
@@ -241,10 +241,10 @@ def build() -> py_trees.composites.Sequence:
         num_failures=_MAX_CEO_ATTEMPTS,
     )
 
-    seq = py_trees.composites.Sequence(name="Room2_ExitAndReport", memory=True)
+    seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
         GoToCorridorEntrance(),
-        SetArmPosition("look_down_at_floor"),
+        SetArmPosition("look_for_qr"),
         ceo_loop,
         GenerateReport(),
     ])

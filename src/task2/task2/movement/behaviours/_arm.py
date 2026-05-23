@@ -8,7 +8,7 @@ from rclpy.publisher import Publisher
 from rclpy.impl.rcutils_logger import RcutilsLogger
 
 
-_ARM_SETTLE_SEC = 1.0
+_ARM_SETTLE_SEC = 4.0
 
 
 class SetArmPosition(py_trees.behaviour.Behaviour):

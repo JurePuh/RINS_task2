@@ -17,10 +17,13 @@ TASK_INSPECT_BARRELS = "/task_inspect_barrels"
 TASK_ANOMALY_RED = "/task_anomaly_red"
 TASK_ANOMALY_GREEN = "/task_anomaly_green"
 
+# --- Rings -----------------------------------------------------------------
+RING_ACTIVE = "/ring_active" # True when ring count should be in report
+
 # --- Barrels -----------------------------------------------------------------
+BARREL_ACTIVE = "/barrel_active" # True while we should visit horizontal barrels.
 PENDING_BARRELS = "/pending_barrels" # deque[Barrel] of newly-seen horizontal barrels that still need visiting.
 HANDLED_BARRELS = "/handled_barrels" # set[Barrel] of horizontal barrels we've already visited.
-BARREL_ACTIVE = "/barrel_active" # True while we should visit horizontal barrels.
 BARREL_DESTINATION = "/barrel_destination" # Goal we need to go to in order to visit the next barrel
 RECOMPUTE_BARREL_DESTINATION = "/recompute_barrel_destination" # Flag that updated cordinates of current barrel destination arrived.
 

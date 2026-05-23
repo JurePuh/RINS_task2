@@ -28,13 +28,13 @@ from task2.movement.models import Gender, Person, Pose, Point, Vector
 
 
 # Stub: i-th person we converse with returns the i-th task string.
-_STUB_CONVERSATION_RESULTS = ["inspect_barrels", "anomaly_red", "anomaly_green"]
+_STUB_CONVERSATION_RESULTS = ["count_rings", "count_rings", "count_rings"]
 
 _RESULT_TO_ACTIVE_FLAG = {
     "anomaly_red":     bb.ANOMALY_RED_ACTIVE,
     "anomaly_green":   bb.ANOMALY_GREEN_ACTIVE,
     "inspect_barrels": bb.BARREL_ACTIVE,
-    # "count_rings" -> no active flag (passive task)
+    "count_rings":     bb.RING_ACTIVE,
 }
 
 
@@ -87,7 +87,7 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
                 f"for person {person.face_id}"
             )
         else:
-            self._ros_logger.info(
+            self._ros_logger.warning(
                 f"wall_normal_at not available; using fallback for person {person.face_id}"
             )
 
