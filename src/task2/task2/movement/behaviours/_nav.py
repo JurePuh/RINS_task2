@@ -13,7 +13,7 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from task2.movement.models import Pose, Point, Vector
 
 
-STANDOFF = 0.4 # How far before target the goal should be set
+STANDOFF = 0.5 # How far before target the goal should be set
 SERVICE_TIMEOUT_SEC = 1.0
 
 
