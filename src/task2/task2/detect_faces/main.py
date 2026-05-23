@@ -1,6 +1,8 @@
 import rclpy
+import rclpy.duration
+import rclpy.time
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data, QoSReliabilityPolicy
+from rclpy.qos import qos_profile_sensor_data
 
 from ultralytics import YOLO
 
@@ -9,90 +11,93 @@ from sensor_msgs_py import point_cloud2 as pc2
 
 import tf2_ros
 from geometry_msgs.msg import PoseStamped
-
 import tf2_geometry_msgs
 
 from visualization_msgs.msg import Marker
 from cv_bridge import CvBridge, CvBridgeError
 
 import cv2
+import math
 import numpy as np
-import torch
-from facenet_pytorch import InceptionResnetV1
 
 import message_filters
 from message_filters import ApproximateTimeSynchronizer
 
 from msg_types.msg import FaceDetect
 
-class Face():
-    def __init__(self, x, y, id=None, seen_counter=0, sum_x=0, sum_y=0):
-        self.x = x
-        self.y = y
-        self.id = id
-        self.seen_counter = seen_counter
-        self.sum_x = sum_x
-        self.sum_y = sum_y
+
+# Accumulator for sightings of the same face until it crosses the accept threshold.
+class Face:
+    def __init__(
+        self,
+        x: float,
+        y: float,
+        id: int | None = None,
+        seen_counter: int = 0,
+        sum_x: float = 0.0,
+        sum_y: float = 0.0,
+    ) -> None:
+        self.x: float = x
+        self.y: float = y
+        self.id: int | None = id
+        self.seen_counter: int = seen_counter
+        self.sum_x: float = sum_x
+        self.sum_y: float = sum_y
+        self.last_pub_x: float = 0.0
+        self.last_pub_y: float = 0.0
 
 
 class detect_faces(Node):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('detect_faces')
-        
-        self.get_logger().info(f"VERSION: FACES")
 
-        # model definition
+        # models
         self.model = YOLO("yolov8n.pt")
-        self.embedding_model = InceptionResnetV1(pretrained='vggface2').eval()
 
-        # marker publisher
+        # publishers
         self.marker_pub = self.create_publisher(Marker, "/people_marker2", 10)
-
-        # face found publisher — fires once per accepted face, ever.
+        # fires once per accepted face, ever
         self.face_pub = self.create_publisher(FaceDetect, "/face_detect", 10)
 
         # tf
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # Create message_filters subscribers (not regular subscriptions)
-        self.rgb_sub = message_filters.Subscriber(self, Image, "/oakd/rgb/preview/image_raw", qos_profile=qos_profile_sensor_data)
-        self.pc_sub = message_filters.Subscriber(self, PointCloud2, "/oakd/rgb/preview/depth/points", qos_profile=qos_profile_sensor_data)
-
-        # synchronize topics with 50ms error allowed
-        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.pc_sub],queue_size=5,slop=0.05)
+        # synchronized rgb + depth-points
+        self.rgb_sub = message_filters.Subscriber(
+            self, Image, "/oakd/rgb/preview/image_raw", qos_profile=qos_profile_sensor_data
+        )
+        self.pc_sub = message_filters.Subscriber(
+            self, PointCloud2, "/oakd/rgb/preview/depth/points", qos_profile=qos_profile_sensor_data
+        )
+        self.ts = ApproximateTimeSynchronizer(
+            [self.rgb_sub, self.pc_sub], queue_size=5, slop=0.05
+        )
         self.ts.registerCallback(self.synced_callback)
-        
-        
+
         self.bridge = CvBridge()
-        self.detection_color = (0,0,255)
+        self.detection_color = (0, 0, 255)
 
-        self.declare_parameters(
-			namespace='',
-			parameters=[
-				('device', ''),
-		])
-        self.device = self.get_parameter('device').get_parameter_value().string_value
-
+        self.declare_parameters(namespace='', parameters=[('device', '')]) # type: ignore
+        self.device: str = self.get_parameter('device').get_parameter_value().string_value
 
         # face logic
         # potential_faces: detections still accumulating sightings toward the
         #     accept threshold.
-        # accepted_face_keys: quantised (x, y) cells of faces already published.
-        #     Used to silently drop further sightings of the same face so they
-        #     don't keep spawning new entries in potential_faces.
-        self.potential_faces = []
-        self.accepted_face_keys: set[tuple[int, int]] = set()
-        self.id_counter = 0
-        self.accept_threshold = 10
+        # accepted_faces: faces already published; further sightings update
+        #     their running mean and re-publish on /face_detect when the mean
+        #     drifts past `republish_threshold`.
+        self.potential_faces: list[Face] = []
+        self.accepted_faces: list[Face] = []
+        self.id_counter: int = 0
+        self.accept_threshold: int = 10
+        self.republish_threshold: float = 0.02
 
-    @staticmethod
-    def _accept_key(x: float, y: float) -> tuple[int, int]:
-        # 0.5 m bins — matches the 0.5 m tolerance used by `seen()`.
-        return (round(x * 2), round(y * 2))
+        self._logger.info(
+            f"detect_faces started (device='{self.device}', accept_threshold={self.accept_threshold})"
+        )
 
-
-    def build_marker(self, pc_msg, map_pose, face_id):
+    def build_marker(self, pc_msg: PointCloud2, map_pose: PoseStamped, face_id: int) -> Marker:
         marker = Marker()
         marker.header.frame_id = "map"
         marker.header.stamp = pc_msg.header.stamp
@@ -116,158 +121,183 @@ class detect_faces(Node):
 
         return marker
 
-
-    def seen(self, new_face):
-        """ checking if the face was already seen
-
-        arg: new_face is tuple (x, y)
-        """
-
-        x, y = new_face[0], new_face[1]
+    def seen(self, x: float, y: float) -> Face | None:
+        """Return the matching potential face within 0.5 m, or None."""
         for face in self.potential_faces:
             if abs(face.x - x) < 0.5 and abs(face.y - y) < 0.5:
-                return True, face
+                return face
+        return None
 
-        return False, None
+    def _find_accepted(self, x: float, y: float) -> Face | None:
+        """Return the matching already-accepted face within 0.5 m, or None."""
+        for face in self.accepted_faces:
+            if abs(face.x - x) < 0.5 and abs(face.y - y) < 0.5:
+                return face
+        return None
 
+    # Publishes marker + FaceDetect, marks key seen, removes from potential list.
+    def _accept_face(self, face: Face, pc_msg: PointCloud2, map_pose: PoseStamped) -> None:
+        face.id = self.id_counter
+        self.id_counter += 1
 
-    def embed_face(self, cropped_face):
-        face_resized = cv2.resize(cropped_face, (160, 160))
-        face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
-        face_normalized = (face_rgb / 255.0 - 0.5) / 0.5
-        tensor = torch.tensor(face_normalized.transpose(2, 0, 1), dtype=torch.float32).unsqueeze(0)
+        marker = self.build_marker(pc_msg, map_pose, face.id)
+        self.marker_pub.publish(marker)
 
-        with torch.no_grad():
-            embedding = self.embedding_model(tensor)
-    
-        return embedding.squeeze().numpy()  # 128-d vector
+        msg = FaceDetect()
+        msg.id = face.id
+        msg.x = face.x
+        msg.y = face.y
+        self.face_pub.publish(msg)
 
-    def synced_callback(self, rgb_msg, pc_msg):
+        face.last_pub_x = face.x
+        face.last_pub_y = face.y
+        self.accepted_faces.append(face)
+        self.potential_faces.remove(face)
+
+        self._logger.info(
+            f"ACCEPTED face id={face.id} at x={face.x:.2f}, y={face.y:.2f} "
+            f"(total accepted={len(self.accepted_faces)})"
+        )
+
+    def _republish_face(self, face: Face, pc_msg: PointCloud2, map_pose: PoseStamped) -> None:
+        marker = self.build_marker(pc_msg, map_pose, face.id)  # type: ignore[arg-type]
+        self.marker_pub.publish(marker)
+
+        msg = FaceDetect()
+        msg.id = face.id  # type: ignore[assignment]
+        msg.x = face.x
+        msg.y = face.y
+        self.face_pub.publish(msg)
+
+        self._logger.info(
+            f"REPUBLISHED face id={face.id} at x={face.x:.2f}, y={face.y:.2f} "
+            f"(shift from last={math.hypot(face.x - face.last_pub_x, face.y - face.last_pub_y):.3f} m)"
+        )
+
+        face.last_pub_x = face.x
+        face.last_pub_y = face.y
+
+    def synced_callback(self, rgb_msg: Image, pc_msg: PointCloud2) -> None:
         try:
             cv_image = self.bridge.imgmsg_to_cv2(rgb_msg, "bgr8")
         except CvBridgeError as e:
-            print(e)
+            self._logger.warn(f"CvBridge conversion failed: {e}")
             return
 
-        res = self.model.predict(cv_image, imgsz=(256, 320), show=False, verbose=False, classes=[0], device=self.device)
+        res = self.model.predict(
+            cv_image, imgsz=(256, 320), show=False, verbose=False,
+            classes=[0], device=self.device,
+        )
 
-        # parsing the point cloud
+        # reshape point cloud to (H, W, 3) so we can index by pixel
         height = pc_msg.height
         width = pc_msg.width
-        a = pc2.read_points_numpy(pc_msg, field_names=("x", "y", "z"))
-        a = a.reshape((height, width, 3))
+        pc_xyz = pc2.read_points_numpy(pc_msg, field_names=("x", "y", "z")) # type: ignore
+        pc_xyz = pc_xyz.reshape((height, width, 3))
 
         for x in res:
-            bbox = x.boxes.xyxy
-            if bbox.nelement() == 0:
+            bbox = x.boxes.xyxy # type: ignore
+            if bbox.nelement() == 0: # type: ignore
                 continue
 
             bbox = bbox[0]
 
-            # crop face
+            # bbox -> pixel rect (clamped to image)
             h, w = cv_image.shape[:2]
             x1 = max(0, int(float(bbox[0])))
             y1 = max(0, int(float(bbox[1])))
             x2 = min(w, max(x1 + 1, int(float(bbox[2]))))
             y2 = min(h, max(y1 + 1, int(float(bbox[3]))))
-            cropped_face = cv_image[y1:y2, x1:x2]
 
             cv_image = cv2.rectangle(cv_image, (x1, y1), (x2, y2), self.detection_color, 3)
-            cx = int((bbox[0] + bbox[2]) / 2)
-            cy = int((bbox[1] + bbox[3]) / 2)
+            cx = int((float(bbox[0]) + float(bbox[2])) / 2)
+            cy = int((float(bbox[1]) + float(bbox[3])) / 2)
             cv_image = cv2.circle(cv_image, (cx, cy), 5, self.detection_color, -1)
 
-            # depth extraction
-            d = a[cy, cx, :]
-
+            d = pc_xyz[cy, cx, :]
             if np.isnan(d[0]):
                 self._logger.warn("Depth is NaN at face center, skipping")
                 continue
 
-
-            # face classifier
-            # face_embedding = self.embed_face(cropped_face)
-            # self._logger.info(f"face_embedding")
-
-
-
-            # Build a pose
+            # build a pose in the camera frame, then transform to map
             pose = PoseStamped()
-            pose.header = pc_msg.header 
+            pose.header = pc_msg.header
             pose.pose.position.x = float(d[0])
             pose.pose.position.y = float(d[1])
             pose.pose.position.z = float(d[2])
             pose.pose.orientation.w = 1.0
 
             try:
-                trans = self.tf_buffer.lookup_transform("map", pose.header.frame_id, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
+                trans = self.tf_buffer.lookup_transform(
+                    "map", pose.header.frame_id, rclpy.time.Time(),
+                    timeout=rclpy.duration.Duration(seconds=0.5),
+                )
                 map_pose = tf2_geometry_msgs.do_transform_pose_stamped(pose, trans)
-            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:  # type: ignore
                 self._logger.warn(f"TF transform failed: {e}")
                 continue
 
-
             face_x = map_pose.pose.position.x
             face_y = map_pose.pose.position.y
-            face_z = map_pose.pose.position.z
-            new_face = (face_x, face_y)
 
-        
-
-            # Drop further sightings of an already-accepted face. Mission
-            # logic (visited/handled) lives in the movement node now; the
-            # detector just fires once when a face crosses the threshold.
-            if self._accept_key(face_x, face_y) in self.accepted_face_keys:
+            # If this matches an already-accepted face, update its running
+            # mean and republish on /face_detect when the mean drifts past
+            # `republish_threshold`. The movement node uses the id to update
+            # the pending person's location in place.
+            accepted = self._find_accepted(face_x, face_y)
+            if accepted is not None:
+                accepted.sum_x += face_x
+                accepted.sum_y += face_y
+                accepted.seen_counter += 1
+                accepted.x = accepted.sum_x / accepted.seen_counter
+                accepted.y = accepted.sum_y / accepted.seen_counter
+                shift = math.hypot(
+                    accepted.x - accepted.last_pub_x,
+                    accepted.y - accepted.last_pub_y,
+                )
+                if shift > self.republish_threshold:
+                    self._republish_face(accepted, pc_msg, map_pose)
                 continue
 
-            was_seen, face = self.seen(new_face)
-            if not was_seen:
+            face = self.seen(face_x, face_y)
+            if face is None:
                 face = Face(x=face_x, y=face_y, seen_counter=1, sum_x=face_x, sum_y=face_y)
                 self.potential_faces.append(face)
-                self._logger.info(f"NEW face x={face_x}, y={face_y}")
-            else:
-                face.sum_x += face_x
-                face.sum_y += face_y
-                face.seen_counter += 1
-                face.x = face.sum_x / face.seen_counter
-                face.y = face.sum_y / face.seen_counter
+                self._logger.info(
+                    f"NEW potential face at x={face_x:.2f}, y={face_y:.2f} "
+                    f"(potential_count={len(self.potential_faces)})"
+                )
+                continue
 
-                if face.seen_counter > self.accept_threshold:
-                    face.id = self.id_counter
-                    self.id_counter += 1
+            # update running mean
+            face.sum_x += face_x
+            face.sum_y += face_y
+            face.seen_counter += 1
+            face.x = face.sum_x / face.seen_counter
+            face.y = face.sum_y / face.seen_counter
+            self._logger.debug(
+                f"updated potential face x={face.x:.2f}, y={face.y:.2f}, "
+                f"seen={face.seen_counter}/{self.accept_threshold}"
+            )
 
-                    marker = self.build_marker(pc_msg, map_pose, face.id)
-                    self.marker_pub.publish(marker)
-
-                    msg = FaceDetect()
-                    msg.id = face.id
-                    msg.x = face.x
-                    msg.y = face.y
-                    self.face_pub.publish(msg)
-                    self._logger.info(
-                        f"Accepted face id={face.id} at x={face.x:.2f}, y={face.y:.2f}"
-                    )
-
-                    self.accepted_face_keys.add(self._accept_key(face.x, face.y))
-                    self.potential_faces.remove(face)
-                        
-
-    
-            #self._logger.info(f"person detected at x={map_pose.pose.position.x}, y={map_pose.pose.position.y}")
+            if face.seen_counter > self.accept_threshold:
+                self._logger.debug(
+                    f"crossed threshold at x={face.x:.2f}, y={face.y:.2f}"
+                )
+                self._accept_face(face, pc_msg, map_pose)
 
         cv2.imshow("image", cv_image)
-        key = cv2.waitKey(1)
-        if key == 27:
-            print("exiting")
+        key_pressed = cv2.waitKey(1)
+        if key_pressed == 27:
+            self._logger.info("ESC pressed, exiting")
             exit()
 
 
-def main():
-	print('Face detection node starting.')
+def main() -> None:
+    rclpy.init(args=None)
+    node = detect_faces()
+    rclpy.spin(node)
 
-	rclpy.init(args=None)
-	node = detect_faces()
-	rclpy.spin(node)
 
 if __name__ == '__main__':
-	main()
+    main()
