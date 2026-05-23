@@ -15,4 +15,10 @@ def generate_launch_description():
             name='classify_face',
             output='screen',
         ),
+        Node(
+            package='task2',
+            executable='detect_anomalies',
+            name='detect_anomalies',
+            output='screen',
+        ),
     ])

@@ -15,10 +15,4 @@ def generate_launch_description():
             name='map_query',
             output='screen',
         ),
-        Node(
-            package='task2',
-            executable='movement',
-            name='movement',
-            output='screen',
-        ),
     ])
