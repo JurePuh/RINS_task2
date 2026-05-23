@@ -5,7 +5,7 @@ import math
 import py_trees
 import py_trees_ros
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 from nav2_msgs.action import Spin
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.publisher import Publisher
@@ -21,8 +21,8 @@ from task2.movement.models import Pose
 
 _CORRIDOR_ENTRANCE_POSE = Pose( 2.8, -0.2, -1.5)
 
-_FWD_SPEED = 0.15      # m/s forward while following the line
-_KP = 0.8              # proportional gain: angular.z = -_KP * offset
+_FWD_SPEED = 0.25      # m/s forward while following the line
+_KP = 2.5              # proportional gain: angular.z = -_KP * offset
 _END_FRAMES = 10       # consecutive STATE_LOST frames after first LINE → done
 
 _END_LINE = "All anomalies inspected. I'd take a bow but I don't have hips."
@@ -54,8 +54,11 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
 
     def setup(self, **kwargs):
         node = kwargs["node"]
+        self._node = node  # kept to stamp TwistStamped with the ROS clock
         self._ros_logger: RcutilsLogger = node.get_logger()
-        self._cmd_pub: Publisher = node.create_publisher(Twist, "/cmd_vel", 10)
+        # Nav2 here is configured with enable_stamped_cmd_vel=true, so the drive
+        # subscriber expects TwistStamped on /cmd_vel — plain Twist is ignored.
+        self._cmd_pub: Publisher = node.create_publisher(TwistStamped, "/cmd_vel", 10)
         node.create_subscription(BlueLineStatus, "/blue_line", self._on_status, 10)
 
     def _on_status(self, msg: BlueLineStatus) -> None:
@@ -71,33 +74,41 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         
         # No status received yet, wait
         if msg is None:
+            self._ros_logger.debug(f"{self.name}: waiting for /blue_line messages...")
             return py_trees.common.Status.RUNNING
 
         # Lost line - temporary glitch or end of line
         if msg.state == BlueLineStatus.STATE_LOST:
             self._lost_streak += 1
-            if self._seen_line and self._lost_streak >= _END_FRAMES:
+            if self._seen_line and self._lost_streak >= _END_FRAMES: # End of line
                 self._publish_stop()
                 self._ros_logger.info(f"{self.name}: line ended, SUCCESS")
                 return py_trees.common.Status.SUCCESS
             # Coast: zero command while we wait to confirm end-of-line.
             self._publish_stop()
+            self._ros_logger.debug(f"{self.name}: line lost (streak={self._lost_streak}), coasting...")
             return py_trees.common.Status.RUNNING
 
         # Drive according to line offset.
         self._seen_line = True
         self._lost_streak = 0
-        cmd = Twist()
-        cmd.linear.x = _FWD_SPEED
-        cmd.angular.z = -_KP * float(msg.offset)
+        cmd = TwistStamped()
+        cmd.header.stamp = self._node.get_clock().now().to_msg()
+        cmd.twist.linear.x = _FWD_SPEED
+        cmd.twist.angular.z = -_KP * float(msg.offset_right)
         self._cmd_pub.publish(cmd)
+
+        self._ros_logger.debug(f"{self.name}: Following line, publishing cmd_vel: linear.x={cmd.twist.linear.x:.2f} angular.z={cmd.twist.angular.z:.2f}")
+        
         return py_trees.common.Status.RUNNING
 
     def terminate(self, new_status):
         self._publish_stop()
 
     def _publish_stop(self) -> None:
-        self._cmd_pub.publish(Twist())
+        stop = TwistStamped()
+        stop.header.stamp = self._node.get_clock().now().to_msg()
+        self._cmd_pub.publish(stop)
 
 
 class CheckIfAtCEO(py_trees.behaviour.Behaviour):
@@ -110,8 +121,8 @@ class CheckIfAtCEO(py_trees.behaviour.Behaviour):
         self._log = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
-        self._log.info("[TODO] CheckIfAtCEO -> assuming SUCCESS")
-        return py_trees.common.Status.SUCCESS
+        self._log.info("[TODO] CheckIfAtCEO -> assuming FAILURE")
+        return py_trees.common.Status.FAILURE
 
 
 class UTurn(py_trees_ros.action_clients.FromConstant):

@@ -15,4 +15,10 @@ def generate_launch_description():
             name='map_query',
             output='screen',
         ),
+        Node(
+            package='task2',
+            executable='blue_line',
+            name='blue_line',
+            output='screen',
+        ),
     ])
