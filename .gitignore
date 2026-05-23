@@ -16,6 +16,7 @@ src/task2/.vscode/*
 
 src/task2/task2/anomaly_detection/img/**
 !src/task2/task2/anomaly_detection/img/.gitkeep
-src/task2/task2/anomaly_detection/snn/model/__pycache__/*
+src/task2/task2/anomaly_detection/ssn/model/__pycache__/*
 src/task2/task2/anomaly_detection/__pycache__/*
-src/task2/task2/anomaly_detection/snn/common/__pycache__/*
+src/task2/task2/anomaly_detection/ssn/common/__pycache__/*
+src/task2/task2/anomaly_detection/ssn/__pycache__/*
