@@ -1,6 +1,8 @@
 """Room 2: exit corridor, blue-line following, CTO check, report, final dance."""
 
 import math
+import os
+import subprocess
 
 import py_trees
 import py_trees_ros
@@ -20,6 +22,7 @@ from msg_types.srv import ClassifyFace
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._arm import SetArmPosition
 from task2.movement.behaviours._nav import LoggingNavWaypoint, SERVICE_TIMEOUT_SEC, build_nav_goal
+from task2.movement.log_utils import log_throttled
 from task2.movement.models import Pose
 
 
@@ -75,25 +78,48 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
 
     def update(self) -> py_trees.common.Status:
         msg = self._last
-        
+
         # No status received yet, wait
         if msg is None:
-            self._ros_logger.debug(f"{self.name}: waiting for /blue_line messages...")
+            log_throttled(
+                self._ros_logger, self._node, f"{self.name}.waiting", "debug",
+                f"{self.name}: waiting for /blue_line messages...",
+            )
             return py_trees.common.Status.RUNNING
 
         # Lost line - temporary glitch or end of line
         if msg.state == BlueLineStatus.STATE_LOST:
+            prev_streak = self._lost_streak
             self._lost_streak += 1
+            if prev_streak == 0:
+                self._ros_logger.info(
+                    f"{self.name}: line lost (streak=1), coasting "
+                    f"(seen_line={self._seen_line})"
+                )
             if self._seen_line and self._lost_streak >= _END_FRAMES: # End of line
                 self._publish_stop()
-                self._ros_logger.info(f"{self.name}: line ended, SUCCESS")
+                self._ros_logger.info(
+                    f"{self.name}: line ended after {self._lost_streak} lost frames, SUCCESS"
+                )
                 return py_trees.common.Status.SUCCESS
             # Coast: zero command while we wait to confirm end-of-line.
             self._publish_stop()
-            self._ros_logger.debug(f"{self.name}: line lost (streak={self._lost_streak}), coasting...")
+            log_throttled(
+                self._ros_logger, self._node, f"{self.name}.coasting", "debug",
+                f"{self.name}: line lost (streak={self._lost_streak}/{_END_FRAMES}), coasting",
+            )
             return py_trees.common.Status.RUNNING
 
         # Drive according to line offset.
+        if not self._seen_line:
+            self._ros_logger.info(
+                f"{self.name}: first STATE_LINE acquired, "
+                f"offset_right={msg.offset_right:.3f}"
+            )
+        if self._lost_streak > 0:
+            self._ros_logger.info(
+                f"{self.name}: line re-acquired after {self._lost_streak} lost frames"
+            )
         self._seen_line = True
         self._lost_streak = 0
         cmd = TwistStamped()
@@ -102,8 +128,12 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         cmd.twist.angular.z = -_KP * float(msg.offset_right)
         self._cmd_pub.publish(cmd)
 
-        self._ros_logger.debug(f"{self.name}: Following line, publishing cmd_vel: linear.x={cmd.twist.linear.x:.2f} angular.z={cmd.twist.angular.z:.2f}")
-        
+        log_throttled(
+            self._ros_logger, self._node, f"{self.name}.driving", "debug",
+            f"{self.name}: following line offset_right={msg.offset_right:.3f} "
+            f"-> cmd_vel linear.x={cmd.twist.linear.x:.2f} angular.z={cmd.twist.angular.z:.2f}",
+        )
+
         return py_trees.common.Status.RUNNING
 
     def terminate(self, new_status):
@@ -129,6 +159,12 @@ class CheckIfAtCTO(py_trees.behaviour.Behaviour):
         self._client = self._node.create_client(ClassifyFace, "classify_face")
 
     def initialise(self):
+        self._ros_logger.info(
+            f"{self.name}: calling /classify_face (timeout={SERVICE_TIMEOUT_SEC}s)"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: request payload = ClassifyFace.Request() (empty)"
+        )
         self._future = self._client.call_async(ClassifyFace.Request())
         self._start_time = self._node.get_clock().now().nanoseconds * 1e-9
 
@@ -138,9 +174,17 @@ class CheckIfAtCTO(py_trees.behaviour.Behaviour):
 
         if not self._future.done():
             now = self._node.get_clock().now().nanoseconds * 1e-9
-            if now - self._start_time < SERVICE_TIMEOUT_SEC:
+            elapsed = now - self._start_time
+            if elapsed < SERVICE_TIMEOUT_SEC:
+                log_throttled(
+                    self._ros_logger, self._node, f"{self.name}.waiting", "debug",
+                    f"{self.name}: waiting for classify_face response "
+                    f"(elapsed={elapsed:.2f}s)",
+                )
                 return py_trees.common.Status.RUNNING
-            self._ros_logger.warning("CheckIfAtCTO: classify_face timed out")
+            self._ros_logger.warning(
+                f"CheckIfAtCTO: classify_face timed out after {elapsed:.2f}s"
+            )
             return py_trees.common.Status.FAILURE
 
         resp: ClassifyFace.Response = self._future.result()  # type: ignore
@@ -191,7 +235,9 @@ class UTurn(py_trees_ros.action_clients.FromConstant):
 
 
 class GenerateReport(py_trees.behaviour.Behaviour):
-    """TODO: Log the collected task results. Stub for a future /generate_report service."""
+    """Build the inspection PDF from blackboard task results and open it."""
+
+    _OUT_DIR = os.path.expanduser("~/LOCAL/Faks/RInS/project2_ws/src/task2/reports")
 
     def __init__(self, name: str = "GenerateReport"):
         super().__init__(name=name)
@@ -208,15 +254,36 @@ class GenerateReport(py_trees.behaviour.Behaviour):
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
-        rings = self.bb.get(bb.TASK_COUNT_RINGS)
-        barrels = self.bb.get(bb.TASK_INSPECT_BARRELS)
-        red = self.bb.get(bb.TASK_ANOMALY_RED)
-        green = self.bb.get(bb.TASK_ANOMALY_GREEN)
+        from task2.movement.report import build_report
+
+        candidates = [
+            (self.bb.get(bb.TASK_COUNT_RINGS), "Ring Counting"),
+            (self.bb.get(bb.TASK_INSPECT_BARRELS), "Barrel Inspection"),
+            (self.bb.get(bb.TASK_ANOMALY_RED), "Anomaly Detection (Red)"),
+            (self.bb.get(bb.TASK_ANOMALY_GREEN), "Anomaly Detection (Green)"),
+        ]
+        tasks = [(t, title) for t, title in candidates if t is not None and t.was_asked_for]
         self._ros_logger.info(
-            f"GenerateReport TODO: rings={len(rings.rings)} "
-            f"barrels={len(barrels.barrels)} (insp={len(barrels.inspections)}) "
-            f"red_tiles={len(red.tiles)} green_tiles={len(green.tiles)}"
+            f"{self.name}: starting PDF build for {len(tasks)} task(s): "
+            f"{[title for _, title in tasks]}"
         )
+        self._ros_logger.debug(
+            f"{self.name}: task inputs = "
+            f"{[(title, repr(t)) for t, title in tasks]}"
+        )
+
+        try:
+            path = build_report(tasks, self._OUT_DIR, self._ros_logger)
+            self._ros_logger.info(f"GenerateReport: wrote {path}")
+        except Exception as e:
+            self._ros_logger.error(f"GenerateReport: failed to build PDF: {e}")
+            return py_trees.common.Status.SUCCESS
+
+        try:
+            subprocess.Popen(["xdg-open", path])
+            self._ros_logger.info(f"{self.name}: opened viewer for {path}")
+        except Exception as e:
+            self._ros_logger.warn(f"GenerateReport: could not open viewer: {e}")
         return py_trees.common.Status.SUCCESS
 
 
@@ -264,8 +331,9 @@ class _Shutdown(py_trees.behaviour.Behaviour):
         self._ros_logger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
-        self._ros_logger.info(f"{self.name}: mission complete, shutting down")
+        self._ros_logger.info(f"{self.name}: mission complete, calling rclpy.shutdown()")
         rclpy.shutdown()
+        self._ros_logger.info(f"{self.name}: rclpy.shutdown() returned")
         return py_trees.common.Status.SUCCESS
 
 

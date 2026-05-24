@@ -24,6 +24,7 @@ from task2.movement.behaviours._nav import (
     standoff_goal_from_robot,
 )
 from task2.movement.behaviours.conditions import RecomputeNotRequested
+from task2.movement.log_utils import log_throttled
 from task2.movement.models import Gender, Person, Pose, Point, Vector
 
 
@@ -35,6 +36,13 @@ _RESULT_TO_ACTIVE_FLAG = {
     "anomaly_green":   bb.ANOMALY_GREEN_ACTIVE,
     "inspect_barrels": bb.BARREL_ACTIVE,
     "count_rings":     bb.RING_ACTIVE,
+}
+
+_RESULT_TO_TASK_KEY = {
+    "anomaly_red":     bb.TASK_ANOMALY_RED,
+    "anomaly_green":   bb.TASK_ANOMALY_GREEN,
+    "inspect_barrels": bb.TASK_INSPECT_BARRELS,
+    "count_rings":     bb.TASK_COUNT_RINGS,
 }
 
 
@@ -72,10 +80,19 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
         queue = self.bb.get(bb.PENDING_PEOPLE); assert queue, f"{self.qualified_name}: initialise called with empty pending_people queue"
         self._person = queue[0]; assert self._person, f"{self.qualified_name}: initialise set _person to None"
         self.bb.set(bb.RECOMPUTE_FACE_DESTINATION, False)
+        self._ros_logger.info(
+            f"{self.name}: starting for person {self._person.face_id}; "
+            f"RECOMPUTE_FACE_DESTINATION=False; queue_size={len(queue)}"
+        )
 
         self._future = None
         self._start_time = self.node.get_clock().now().nanoseconds * 1e-9
         person = self._person
+        self._ros_logger.debug(
+            f"{self.name}: inputs person.face_id={person.face_id} "
+            f"xy=({person.x:.2f},{person.y:.2f}) "
+            f"service_ready={self.client.service_is_ready()}"
+        )
         # Query wall_normal_at
         if self.client.service_is_ready():
             req = WallNormalAt.Request()
@@ -85,6 +102,9 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
             self._ros_logger.info(
                 f"querying wall_normal_at({person.x:.2f}, {person.y:.2f}) "
                 f"for person {person.face_id}"
+            )
+            self._ros_logger.debug(
+                f"{self.name}: WallNormalAt request x={req.x:.2f} y={req.y:.2f}"
             )
         else:
             self._ros_logger.warning(
@@ -103,6 +123,15 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
                 if resp is not None and getattr(resp, "success", False):
                     goal = standoff_goal_from_normal(point, normal)
                     self.bb.set(bb.FACE_DESTINATION, goal)
+                    gp = goal.pose.pose.position
+                    self._ros_logger.info(
+                        f"{self.name}: FACE_DESTINATION via wall_normal for "
+                        f"person {person.face_id} -> ({gp.x:.2f}, {gp.y:.2f})"
+                    )
+                    self._ros_logger.debug(
+                        f"{self.name}: wall_normal point=({point.x:.2f},{point.y:.2f}) "
+                        f"normal=({normal.x:.2f},{normal.y:.2f})"
+                    )
                     return py_trees.common.Status.SUCCESS
                 self._ros_logger.warning(
                     f"wall_normal_at returned failure for person {person.face_id}; fallback"
@@ -110,10 +139,17 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
                 self._future = None
             else:
                 now = self.node.get_clock().now().nanoseconds * 1e-9
-                if now - self._start_time < SERVICE_TIMEOUT_SEC:
+                elapsed = now - self._start_time
+                if elapsed < SERVICE_TIMEOUT_SEC:
+                    log_throttled(
+                        self._ros_logger, self.node, f"{self.name}.waiting", "debug",
+                        f"{self.name}: waiting for wall_normal_at "
+                        f"(elapsed={elapsed:.2f}s)",
+                    )
                     return py_trees.common.Status.RUNNING
                 self._ros_logger.warning(
-                    f"wall_normal_at timed out for person {person.face_id}; fallback"
+                    f"wall_normal_at timed out for person {person.face_id} "
+                    f"after {elapsed:.2f}s; fallback"
                 )
                 self._future = None
 
@@ -124,10 +160,27 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
             self._ros_logger.warning(
                 f"no robot pose; navigating directly to person {person.face_id}"
             )
-            self.bb.set(bb.FACE_DESTINATION, build_nav_goal(Pose(person.x, person.y, 0.0)))
+            goal = build_nav_goal(Pose(person.x, person.y, 0.0))
+            self.bb.set(bb.FACE_DESTINATION, goal)
+            self._ros_logger.info(
+                f"{self.name}: FACE_DESTINATION via direct fallback for "
+                f"person {person.face_id} -> ({person.x:.2f}, {person.y:.2f})"
+            )
             return py_trees.common.Status.SUCCESS
 
-        self.bb.set(bb.FACE_DESTINATION, standoff_goal_from_robot(Point(robot_xy[0], robot_xy[1]), Point(person.x, person.y)))
+        goal = standoff_goal_from_robot(
+            Point(robot_xy[0], robot_xy[1]), Point(person.x, person.y)
+        )
+        self.bb.set(bb.FACE_DESTINATION, goal)
+        gp = goal.pose.pose.position
+        self._ros_logger.info(
+            f"{self.name}: FACE_DESTINATION via robot-tf fallback for "
+            f"person {person.face_id} -> ({gp.x:.2f}, {gp.y:.2f})"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: robot=({robot_xy[0]:.2f},{robot_xy[1]:.2f}) "
+            f"person=({person.x:.2f},{person.y:.2f})"
+        )
         return py_trees.common.Status.SUCCESS
 
 
@@ -186,6 +239,9 @@ class TurnTowardsPerson(py_trees_ros.action_clients.FromConstant):
 
     def update(self):
         if self._skip:
+            self._ros_logger.info(
+                f"{self.name}: skipping spin (tf lookup failed in initialise)"
+            )
             return py_trees.common.Status.SUCCESS
         return super().update()
 
@@ -207,6 +263,16 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
         self.client = self.node.create_client(ClassifyFace, "classify_face")
 
     def initialise(self):
+        queue = self.bb.get(bb.PENDING_PEOPLE)
+        head = queue[0] if queue else None
+        self._ros_logger.info(
+            f"{self.name}: calling /classify_face for person "
+            f"{head.face_id if head else '?'}"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: request payload = ClassifyFace.Request() (empty); "
+            f"queue_size={len(queue) if queue else 0}"
+        )
         self._future = self.client.call_async(ClassifyFace.Request())
         self._start_time = self.node.get_clock().now().nanoseconds * 1e-9
 
@@ -220,10 +286,17 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
 
         if not self._future.done():
             now = self.node.get_clock().now().nanoseconds * 1e-9
-            if now - self._start_time < SERVICE_TIMEOUT_SEC:
+            elapsed = now - self._start_time
+            if elapsed < SERVICE_TIMEOUT_SEC:
+                log_throttled(
+                    self._ros_logger, self.node, f"{self.name}.waiting", "debug",
+                    f"{self.name}: waiting for classify_face "
+                    f"(elapsed={elapsed:.2f}s, person={person.face_id})",
+                )
                 return py_trees.common.Status.RUNNING
             self._ros_logger.warning(
-                f"classify_face timed out for person {person.face_id}"
+                f"classify_face timed out for person {person.face_id} "
+                f"after {elapsed:.2f}s"
             )
             return py_trees.common.Status.FAILURE
 
@@ -272,6 +345,8 @@ class ConversePerson(py_trees.behaviour.Behaviour):
 
     def update(self) -> py_trees.common.Status:
         handled = self.bb.get(bb.HANDLED_PEOPLE)
+        
+        # Set conversation result to blackboard
         idx = len(handled)
         if idx < len(_STUB_CONVERSATION_RESULTS):
             result = _STUB_CONVERSATION_RESULTS[idx]
@@ -279,10 +354,16 @@ class ConversePerson(py_trees.behaviour.Behaviour):
             result = ""
         self.bb.set(bb.CONVERSATION_RESULT, result)
 
+        # Logging purpuses:
         queue = self.bb.get(bb.PENDING_PEOPLE)
         person: Person = queue[0]
         self._ros_logger.info(
-            f"[stub] ConversePerson with {person.name or person.face_id} -> '{result}'"
+            f"[stub] ConversePerson with {person.name or person.face_id} -> '{result}' "
+            f"(handled_so_far={idx})"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: CONVERSATION_RESULT='{result}' "
+            f"person.face_id={person.face_id} role={person.role}"
         )
         return py_trees.common.Status.SUCCESS
 
@@ -295,6 +376,7 @@ class MarkPersonHandled(py_trees.behaviour.Behaviour):
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.WRITE)
         self.bb.register_key(key=bb.HANDLED_PEOPLE, access=py_trees.common.Access.WRITE)
+        self.bb.register_key(key=bb.LAST_HANDLED_PERSON, access=py_trees.common.Access.WRITE)
 
     def setup(self, **kwargs):
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
@@ -304,7 +386,11 @@ class MarkPersonHandled(py_trees.behaviour.Behaviour):
         handled = self.bb.get(bb.HANDLED_PEOPLE)
         person: Person = queue.popleft()
         handled.add(person.face_id)
-        self._ros_logger.info(f"person {person.face_id} marked handled")
+        self.bb.set(bb.LAST_HANDLED_PERSON, person)
+        self._ros_logger.info(
+            f"person {person.face_id} marked handled; "
+            f"pending={len(queue)} handled_total={len(handled)}"
+        )
         return py_trees.common.Status.SUCCESS
 
 
@@ -321,21 +407,45 @@ class ActivateRequestedTask(py_trees.behaviour.Behaviour):
         super().__init__(name=name)
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.CONVERSATION_RESULT, access=py_trees.common.Access.WRITE)
+        self.bb.register_key(key=bb.LAST_HANDLED_PERSON, access=py_trees.common.Access.WRITE)
         for flag_key in _RESULT_TO_ACTIVE_FLAG.values():
             self.bb.register_key(key=flag_key, access=py_trees.common.Access.WRITE)
+        for task_key in _RESULT_TO_TASK_KEY.values():
+            self.bb.register_key(key=task_key, access=py_trees.common.Access.WRITE)
 
     def setup(self, **kwargs):
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
         result = self.bb.get(bb.CONVERSATION_RESULT) or ""
+        self._ros_logger.debug(
+            f"{self.name}: inputs CONVERSATION_RESULT='{result}' "
+            f"valid_keys={list(_RESULT_TO_ACTIVE_FLAG.keys())}"
+        )
+        # Set wanted task to active
         flag_key = _RESULT_TO_ACTIVE_FLAG.get(result)
         if flag_key is not None:
             self.bb.set(flag_key, True)
             self._ros_logger.info(f"activated task: {result} ({flag_key}=True)")
         else:
-            self._ros_logger.info(f"no active flag for result '{result}'")
+            self._ros_logger.warning(f"no active flag for result '{result}'")
+
+        # Record the requester on the task object so it shows up in the report.
+        task_key = _RESULT_TO_TASK_KEY.get(result)
+        requester: Person | None = self.bb.get(bb.LAST_HANDLED_PERSON)
+        if task_key is not None and requester is not None:
+            task = self.bb.get(task_key)
+            if task is not None and requester not in task.requesters:
+                task.requesters.append(requester)
+                self._ros_logger.info(
+                    f"added requester {requester.name or requester.face_id} "
+                    f"to {task_key}"
+                )
+        self.bb.set(bb.LAST_HANDLED_PERSON, None)
+
+        # Clear and succeed
         self.bb.set(bb.CONVERSATION_RESULT, "")
+        self._ros_logger.debug(f"{self.name}: cleared CONVERSATION_RESULT")
         return py_trees.common.Status.SUCCESS
 
 

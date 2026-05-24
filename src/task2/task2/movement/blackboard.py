@@ -8,6 +8,8 @@ HANDLED_PEOPLE = "/handled_people" # set[Person] of people we've already talked 
 FACE_DESTINATION = "/face_destination" # Goal we need to go to in order to talk to the next face
 RECOMPUTE_FACE_DESTINATION = "/recompute_face_destination" # Flag that updated cordinates of current destination arrived.
 
+LAST_HANDLED_PERSON = "/last_handled_person" # Person just popped by MarkPersonHandled; appended to a task's requesters by ActivateRequestedTask.
+
 CONVERSATION_RESULT = "/conversation_result" # Task the person requested. Values: "count_rings" | "inspect_barrels" | "anomaly_red" | "anomaly_green" | ""
 
 # --- Task singletons ---------------------------------------------------------
