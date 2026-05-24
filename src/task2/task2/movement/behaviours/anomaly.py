@@ -24,8 +24,8 @@ from task2.movement.models import Tile, AnomalyTask
 
 
 # --- Hardcoded geometry / counts --------------------------------------------
-_RED_BELT_POSE = Pose(x=0.0, y=0.0, theta=0.0)    # TODO: set real coords
-_GREEN_BELT_POSE = Pose(x=0.0, y=0.0, theta=0.0)  # TODO: set real coords
+_RED_BELT_POSE = Pose(0.18, -4.8, 1.56)
+_GREEN_BELT_POSE = Pose(-4.72, -2.5, -3.11)
 
 _RED_TILE_COUNT = 4
 _GREEN_TILE_COUNT = 5
