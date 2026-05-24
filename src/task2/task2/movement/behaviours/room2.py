@@ -365,6 +365,9 @@ def build() -> py_trees.composites.Sequence:
 
     seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
+        # TODO For debugging in ------
+        GenerateReport(),
+        # For debugging out -----
         GoToCorridorEntrance(),
         SetArmPosition("look_for_qr"),
         cto_loop,

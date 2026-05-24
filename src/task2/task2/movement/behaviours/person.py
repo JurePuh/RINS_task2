@@ -29,7 +29,7 @@ from task2.movement.models import Gender, Person, Pose, Point, Vector
 
 
 # Stub: i-th person we converse with returns the i-th task string.
-_STUB_CONVERSATION_RESULTS = ["count_rings", "count_rings", "count_rings"]
+_STUB_CONVERSATION_RESULTS = ["anomaly_red", "anomaly_green", "count_rings"]
 
 _RESULT_TO_ACTIVE_FLAG = {
     "anomaly_red":     bb.ANOMALY_RED_ACTIVE,
