@@ -1,4 +1,5 @@
 from collections import deque
+from msg_types import msg
 import py_trees
 
 import rclpy.node
@@ -6,7 +7,6 @@ from msg_types.msg import FaceDetect, RingDetect, BarrelDetect
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours import room1, room2
-from task2.movement.log_utils import log_throttled
 from task2.movement.models import (
     AnomalyTask,
     Barrel,
@@ -76,42 +76,40 @@ def attach_person_subscription(node: rclpy.node.Node) -> None:
     def on_person(msg: FaceDetect) -> None:
         pending = reader.get(bb.PENDING_PEOPLE)
         handled = reader.get(bb.HANDLED_PEOPLE)
-        log_throttled(
-            logger, node, "tree.on_person", "debug",
-            f"on_person: id={msg.id} xy=({msg.x:.2f},{msg.y:.2f}) "
-            f"pending={len(pending)} handled={len(handled)}",
+        pid = msg.id
+        logger.debug(
+            f"on_person: id={pid} xy=({msg.x:.2f},{msg.y:.2f}) "
+            f"pending={len(pending)} handled={len(handled)}"
         )
 
         # Check if we've already talked to this person
-        if msg.id in handled:
-            log_throttled(
-                logger, node, f"tree.on_person.already_handled.{msg.id}", "debug",
-                f"ignoring face_detect for already-handled {msg.id}",
-            )
+        logger.error(f"pid: {pid}, handled: {handled}") # TODO Debuyg
+        if pid in handled:
+            logger.info(f"on_person: already handled person {pid}; ignoring")
             return
 
         # Check if this is an already-pending person with an updated location
         for i, person in enumerate(pending):
-            if person.face_id == str(msg.id):
+            if person.face_id == pid:
                 person.point = Point(msg.x, msg.y)
                 if i == 0:
                     reader.set(bb.RECOMPUTE_FACE_DESTINATION, True)
                     logger.info(
-                        f"head-of-queue person {msg.id} moved; "
+                        f"on_person: head-of-queue person {pid} moved; "
                         f"RECOMPUTE_FACE_DESTINATION=True"
                     )
                 logger.info(
-                    f"updated person {msg.id} location to ({msg.x:.2f}, {msg.y:.2f})"
+                    f"on_person: updated person {pid} location to ({msg.x:.2f}, {msg.y:.2f})"
                 )
                 return
 
         # Otherwise, add new person to pending queue
-        pending.append(Person(point=Point(msg.x, msg.y), face_id=str(msg.id)))
+        pending.append(Person(point=Point(msg.x, msg.y), face_id=pid))
         logger.info(
-            f"new person {msg.id} queued at ({msg.x:.2f}, {msg.y:.2f}); "
+            f"on_person: new person {pid} queued at ({msg.x:.2f}, {msg.y:.2f}); "
             f"pending={len(pending)}"
         )
-        logger.debug(f"new person msg fields: id={msg.id} x={msg.x} y={msg.y}")
+        logger.debug(f"on_person: new person msg fields: id={pid} x={msg.x} y={msg.y}")
 
     node.create_subscription(FaceDetect, "/face_detect", on_person, 10)
     logger.debug("subscribed to /face_detect")
@@ -124,11 +122,10 @@ def attach_ring_subscription(node: rclpy.node.Node) -> None:
 
     def on_ring(msg: RingDetect) -> None:
         task = reader.get(bb.TASK_COUNT_RINGS)
-        rid = str(msg.id)
-        log_throttled(
-            logger, node, "tree.on_ring", "debug",
+        rid = msg.id
+        logger.debug(
             f"on_ring: id={rid} color={msg.color} xy=({msg.x:.2f},{msg.y:.2f}) "
-            f"known_total={len(task.rings)}",
+            f"known_total={len(task.rings)}"
         )
 
         # Check if this is an already-known ring with an updated location
@@ -136,16 +133,16 @@ def attach_ring_subscription(node: rclpy.node.Node) -> None:
             if existing.id == rid:
                 existing.point = Point(msg.x, msg.y)
                 existing.color = msg.color
-                logger.info(f"updated ring {rid} location to ({msg.x:.2f}, {msg.y:.2f})")
+                logger.info(f"on_ring: updated ring {rid} location to ({msg.x:.2f}, {msg.y:.2f})")
                 return
 
         # Otherwise, add new ring to task list
         task.rings.append(Ring(point=Point(msg.x, msg.y), color=msg.color, id=rid))
         logger.info(
-            f"new ring {rid} ({msg.color}) at ({msg.x:.2f}, {msg.y:.2f}); "
+            f"on_ring: new ring {rid} ({msg.color}) at ({msg.x:.2f}, {msg.y:.2f}); "
             f"total={len(task.rings)}"
         )
-        logger.debug(f"new ring msg fields: id={rid} color={msg.color} x={msg.x} y={msg.y}")
+        logger.debug(f"on_ring: new ring msg fields: id={rid} color={msg.color} x={msg.x} y={msg.y}")
 
     node.create_subscription(RingDetect, "/ring_detect", on_ring, 10)
     logger.debug("subscribed to /ring_detect")
@@ -160,12 +157,11 @@ def attach_barrel_subscription(node: rclpy.node.Node) -> None:
     def on_barrel(msg: BarrelDetect) -> None:
         task = reader.get(bb.TASK_INSPECT_BARRELS)
         queue = reader.get(bb.PENDING_BARRELS)
-        bid = str(msg.id)
-        log_throttled(
-            logger, node, "tree.on_barrel", "debug",
+        bid = msg.id
+        logger.debug(
             f"on_barrel: id={bid} color={msg.color} horiz={msg.horizontal} "
             f"xy=({msg.x:.2f},{msg.y:.2f}) known_total={len(task.barrels)} "
-            f"pending_queue={len(queue)}",
+            f"pending_queue={len(queue)}"
         )
 
         # Check if this is an already-known barrel with an updated location
@@ -175,28 +171,28 @@ def attach_barrel_subscription(node: rclpy.node.Node) -> None:
             existing.color = msg.color
             existing.horizontal = msg.horizontal
             logger.info(
-                f"updated barrel {bid} to ({msg.x:.2f}, {msg.y:.2f}) "
+                f"on_barrel: updated barrel {bid} to ({msg.x:.2f}, {msg.y:.2f}) "
                 f"color={msg.color} horiz={msg.horizontal}"
             )
             return
 
         # Otherwise, add new barrel to task list (and pending queue, if horizontal)
-        b = Barrel(
+        barrel = Barrel(
             point=Point(msg.x, msg.y), color=msg.color, horizontal=msg.horizontal, id=bid,
         )
-        task.barrels.append(b)
-        if b.horizontal:
-            queue.append(b)
+        task.barrels.append(barrel)
+        if barrel.horizontal:
+            queue.append(barrel)
             logger.info(
-                f"horizontal barrel {bid} appended to PENDING_BARRELS; "
+                f"on_barrel: horizontal barrel {bid} appended to PENDING_BARRELS; "
                 f"queue_size={len(queue)}"
             )
         logger.info(
-            f"new barrel {bid} ({b.color}, horiz={b.horizontal}) "
-            f"at ({b.point.x:.2f}, {b.point.y:.2f}); total={len(task.barrels)}"
+            f"on_barrel: new barrel {bid} ({barrel.color}, horiz={barrel.horizontal}) "
+            f"at ({barrel.point.x:.2f}, {barrel.point.y:.2f}); total={len(task.barrels)}"
         )
         logger.debug(
-            f"new barrel msg fields: id={bid} color={msg.color} "
+            f"on_barrel: new barrel msg fields: id={bid} color={msg.color} "
             f"horizontal={msg.horizontal} x={msg.x} y={msg.y}"
         )
 
