@@ -83,7 +83,6 @@ def attach_person_subscription(node: rclpy.node.Node) -> None:
         )
 
         # Check if we've already talked to this person
-        logger.error(f"pid: {pid}, handled: {handled}") # TODO Debuyg
         if pid in handled:
             logger.info(f"on_person: already handled person {pid}; ignoring")
             return

@@ -10,7 +10,7 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from task2.movement.log_utils import log_throttled
 
 
-_ARM_SETTLE_SEC = 4.0
+_ARM_SETTLE_SEC = 3.0
 
 
 class SetArmPosition(py_trees.behaviour.Behaviour):

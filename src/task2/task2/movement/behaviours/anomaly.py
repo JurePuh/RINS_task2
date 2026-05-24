@@ -112,13 +112,13 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.RUNNING
 
         # Update the task with the result
-        result_str = self._future.result().result # type: ignore
-        broken = _BROKEN_BY_RESULT.get(result_str)
+        result = self._future.result()
+        broken = _BROKEN_BY_RESULT.get(result.result, None) # type: ignore
         task: AnomalyTask = self.bb.get(self._task_key)
-        tile = Tile(index=len(task.tiles), broken=broken)
+        tile = Tile(index=len(task.tiles), broken=broken, image_path=result.pile_path, mask_path=result.mask_path) # type: ignore
         task.tiles.append(tile)
         self._ros_logger.info(
-            f"{self.name}: result='{result_str}' -> tile {tile.index} broken={broken} "
+            f"{self.name}: result='{result.result}' -> tile {tile.index} broken={broken} " # type: ignore
             f"(total tiles for {self._color}: {len(task.tiles)})"
         )
 

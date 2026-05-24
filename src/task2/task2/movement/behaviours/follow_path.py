@@ -11,11 +11,11 @@ from task2.movement.models import Pose
 
 _DEFAULT_PATH: list[Pose] = [
     Pose(-0.4, -3.3, -0.5),
-    Pose( 0.3, -4.4,  2.1),
-    Pose(-1.2, -2.4, -2.2),
-    Pose(-4.5, -2.4,  0.7),
-    Pose(-2.2,  0.3, -0.3),
-    Pose( 0.0, -1.1,  1.5),
+    # Pose( 0.3, -4.4,  2.1),
+    # Pose(-1.2, -2.4, -2.2),
+    # Pose(-4.5, -2.4,  0.7),
+    # Pose(-2.2,  0.3, -0.3),
+    # Pose( 0.0, -1.1,  1.5),
 ]
 
 
