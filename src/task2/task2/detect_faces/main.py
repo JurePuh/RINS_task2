@@ -115,8 +115,8 @@ class detect_faces(Node):
         marker.scale.z = 0.2
 
         marker.color.r = 1.0
-        marker.color.g = 1.0
-        marker.color.b = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
         marker.color.a = 1.0
 
         return marker

@@ -20,11 +20,13 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from ultralytics import YOLO
+from visualization_msgs.msg import Marker
 
 from cv_bridge import CvBridge, CvBridgeError
 
 from task2.classify_face.personnel_embeddings_dict import personnel_data
 
+from msg_types.msg import FaceDetect
 from msg_types.srv import ClassifyFace
 
 
@@ -54,11 +56,25 @@ class ClassifyFaceNode(Node):
         super().__init__("classify_face")
 
         self.declare_parameter("image_topic", "/oakd/rgb/preview/image_raw")
+        self.declare_parameter("face_detect_topic", "/face_detect")
+        self.declare_parameter("name_marker_topic", "/people_marker2")
+        self.declare_parameter("name_marker_z", 1.0)
+        self.declare_parameter("name_marker_text_height", 0.25)
         self.declare_parameter("device", "")
         self.declare_parameter("frame_timeout_sec", 2.0)
         self.declare_parameter("num_samples", self.NUM_SAMPLES)
 
         self._image_topic = self.get_parameter("image_topic").get_parameter_value().string_value
+        self._face_detect_topic = (
+            self.get_parameter("face_detect_topic").get_parameter_value().string_value
+        )
+        self._name_marker_topic = (
+            self.get_parameter("name_marker_topic").get_parameter_value().string_value
+        )
+        self._name_marker_z = self.get_parameter("name_marker_z").get_parameter_value().double_value
+        self._name_marker_text_height = (
+            self.get_parameter("name_marker_text_height").get_parameter_value().double_value
+        )
         self._device = self.get_parameter("device").get_parameter_value().string_value
         self._frame_timeout = self.get_parameter("frame_timeout_sec").get_parameter_value().double_value
         self._num_samples = self.get_parameter("num_samples").get_parameter_value().integer_value
@@ -67,8 +83,10 @@ class ClassifyFaceNode(Node):
 
         self._bridge = CvBridge()
         self._frame_lock = threading.Lock()
+        self._face_lock = threading.Lock()
         self._last_msg: Image | None = None
         self._last_stamp_ns: int | None = None
+        self._last_face: FaceDetect | None = None
 
         # Service must not call spin_once; allow image cb to run in parallel while waiting.
         self._cb_group = ReentrantCallbackGroup()
@@ -81,18 +99,67 @@ class ClassifyFaceNode(Node):
         self._sub = self.create_subscription(
             Image, self._image_topic, self._image_cb, 1, callback_group=self._cb_group
         )
+        self._face_sub = self.create_subscription(
+            FaceDetect,
+            self._face_detect_topic,
+            self._face_detect_cb,
+            10,
+            callback_group=self._cb_group,
+        )
+        self._name_marker_pub = self.create_publisher(
+            Marker, self._name_marker_topic, 10
+        )
         self._srv = self.create_service(
             ClassifyFace, "classify_face", self._handle_classify, callback_group=self._cb_group
         )
 
         self.get_logger().info(
-            f"classify_face ready: topic={self._image_topic} samples={self._num_samples}"
+            f"classify_face ready: topic={self._image_topic} "
+            f"face_detect={self._face_detect_topic} name_markers={self._name_marker_topic} "
+            f"samples={self._num_samples}"
         )
 
     def _image_cb(self, msg: Image) -> None:
         with self._frame_lock:
             self._last_msg = msg
             self._last_stamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+
+    def _face_detect_cb(self, msg: FaceDetect) -> None:
+        with self._face_lock:
+            self._last_face = msg
+
+    def _publish_name_marker(self, name: str) -> bool:
+        """Publish TEXT_VIEW_FACING label beside the sphere from detect_faces (same topic, different ns)."""
+        with self._face_lock:
+            face = self._last_face
+        if face is None:
+            self.get_logger().warn(
+                f"no FaceDetect on {self._face_detect_topic} — name label not published"
+            )
+            return False
+
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "face_names"
+        marker.id = int(face.id)
+        marker.type = Marker.TEXT_VIEW_FACING
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(face.x)
+        marker.pose.position.y = float(face.y)
+        marker.pose.position.z = float(self._name_marker_z)
+        marker.pose.orientation.w = 1.0
+        marker.scale.z = float(self._name_marker_text_height)
+        marker.color.r = 0.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        marker.text = name
+        self._name_marker_pub.publish(marker)
+        self.get_logger().info(
+            f"published name label id={face.id} at ({face.x:.2f}, {face.y:.2f}): {name}"
+        )
+        return True
 
     def _wait_fresh_frame(self, previous_stamp_ns: int | None) -> Image | None:
         """Wait for a frame with a new stamp. Never call rclpy.spin_once (executor already spinning)."""
@@ -213,6 +280,7 @@ class ClassifyFaceNode(Node):
         response.gender = rec["gender"]
         vote_count = sum(1 for v in votes if v == winner)
         response.message = f"{vote_count}/{self._num_samples} votes"
+        self._publish_name_marker(winner)
         self.get_logger().info(f"classify_face: name={winner} {response.message}")
         return response
 
