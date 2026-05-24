@@ -6,5 +6,28 @@ scan_to_scan_filter_chain:
       params:
         lower_angle: -2.52
         upper_angle: 3.1
-
-        
+    filter2:
+      name: range
+      type: laser_filters/LaserScanRangeFilter
+      params:
+        use_message_range_limits: false
+        lower_threshold: 0.20
+        upper_threshold: 5.0
+        lower_replacement_value: .inf
+        upper_replacement_value: .inf
+    filter3:
+      name: shadows
+      type: laser_filters/ScanShadowsFilter
+      params:
+        min_angle: 10.0
+        max_angle: 170.0
+        neighbors: 20
+        window: 1
+    filter4:
+      name: speckle
+      type: laser_filters/LaserScanSpeckleFilter
+      params:
+        filter_type: 0
+        max_range: 2.0
+        max_range_difference: 0.1
+        filter_window: 2
