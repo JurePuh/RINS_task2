@@ -90,7 +90,7 @@ class detect_faces(Node):
         self.potential_faces: list[Face] = []
         self.accepted_faces: list[Face] = []
         self.id_counter: int = 0
-        self.accept_threshold: int = 10
+        self.accept_threshold: int = 20
         self.republish_threshold: float = 0.05
 
         self._logger.info(

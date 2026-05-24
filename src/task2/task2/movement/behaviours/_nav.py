@@ -56,7 +56,9 @@ def lookup_robot_xy(tf_buffer: tf2_ros.Buffer, logger: RcutilsLogger) -> tuple[f
     except Exception as exc:
         logger.warning(f"tf lookup map->base_link failed: {exc}")
         return None
-    return (t.transform.translation.x, t.transform.translation.y)
+    xy = (t.transform.translation.x, t.transform.translation.y)
+    logger.debug(f"lookup_robot_xy: map->base_link = ({xy[0]:.2f}, {xy[1]:.2f})")
+    return xy
 
 
 def _log_pose(logger: RcutilsLogger, name: str, goal: NavigateToPose.Goal) -> None:
@@ -89,6 +91,12 @@ class LoggingNavWaypoint(py_trees_ros.action_clients.FromConstant):
         super().initialise()
         _log_pose(self._ros_logger, self.name, self.blackboard.goal)
 
+    def terminate(self, new_status):
+        self._ros_logger.info(
+            f"{self.name}: nav terminating with status={new_status.name}"
+        )
+        super().terminate(new_status)
+
 
 class NavigateToBlackboardGoal(py_trees_ros.action_clients.FromBlackboard):
     """FromBlackboard + 'navigating to pose ...' log on each fresh attempt."""
@@ -101,12 +109,26 @@ class NavigateToBlackboardGoal(py_trees_ros.action_clients.FromBlackboard):
             key=goal_key,
             **kwargs,
         )
+        self._goal_key = goal_key
 
     def setup(self, **kwargs):
         super().setup(**kwargs)
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def initialise(self):
+        self._ros_logger.debug(
+            f"{self.name}: reading goal from blackboard key '{self._goal_key}'"
+        )
         super().initialise()
         if self.send_goal_future is not None:
             _log_pose(self._ros_logger, self.name, self.blackboard.goal)
+        else:
+            self._ros_logger.warning(
+                f"{self.name}: send_goal_future is None — goal not dispatched"
+            )
+
+    def terminate(self, new_status):
+        self._ros_logger.info(
+            f"{self.name}: nav terminating with status={new_status.name}"
+        )
+        super().terminate(new_status)

@@ -5,6 +5,7 @@ import py_trees
 from rclpy.impl.rcutils_logger import RcutilsLogger
 
 from task2.movement import blackboard as bb
+from task2.movement.log_utils import log_throttled
 
 
 # --- ANOMALY TASKS ----
@@ -17,14 +18,24 @@ class _ActiveFlagPending(py_trees.behaviour.Behaviour):
         self._flag_key = flag_key
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=flag_key, access=py_trees.common.Access.READ)
+        self._last_status: py_trees.common.Status | None = None
 
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+        self._node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
 
     def update(self) -> py_trees.common.Status:
-        if self.bb.get(self._flag_key):
-            return py_trees.common.Status.SUCCESS
-        return py_trees.common.Status.FAILURE
+        flag = self.bb.get(self._flag_key)
+        status = (
+            py_trees.common.Status.SUCCESS if flag else py_trees.common.Status.FAILURE
+        )
+        if status != self._last_status:
+            self._ros_logger.info(
+                f"{self.name}: transition {self._last_status} -> {status.name} "
+                f"({self._flag_key}={flag})"
+            )
+            self._last_status = status
+        return status
 
 
 class AnomalyRedActive(_ActiveFlagPending):
@@ -46,16 +57,25 @@ class HasUnhandledPerson(py_trees.behaviour.Behaviour):
         super().__init__(name=name)
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.READ)
+        self._last_status: py_trees.common.Status | None = None
 
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+        self._node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
 
     def update(self) -> py_trees.common.Status:
         queue = self.bb.get(bb.PENDING_PEOPLE)
-        if queue:
-            self._ros_logger.debug(f"{len(queue)} pending faces in queue")
-            return py_trees.common.Status.SUCCESS
-        return py_trees.common.Status.FAILURE
+        n = len(queue)
+        status = (
+            py_trees.common.Status.SUCCESS if queue else py_trees.common.Status.FAILURE
+        )
+        if status != self._last_status:
+            self._ros_logger.info(
+                f"{self.name}: transition {self._last_status} -> {status.name} "
+                f"(pending_people={n})"
+            )
+            self._last_status = status
+        return status
 
 
 # --- BARREL TASKS ----
@@ -68,14 +88,28 @@ class BarrelVisitPending(py_trees.behaviour.Behaviour):
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.BARREL_ACTIVE, access=py_trees.common.Access.READ)
         self.bb.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
+        self._last_status: py_trees.common.Status | None = None
 
     def setup(self, **kwargs):
-        self._log = kwargs["node"].get_logger()
+        self._node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
+        self._log = self._ros_logger
 
     def update(self) -> py_trees.common.Status:
-        if self.bb.get(bb.BARREL_ACTIVE) and self.bb.get(bb.PENDING_BARRELS):
-            return py_trees.common.Status.SUCCESS
-        return py_trees.common.Status.FAILURE
+        active = self.bb.get(bb.BARREL_ACTIVE)
+        queue = self.bb.get(bb.PENDING_BARRELS)
+        status = (
+            py_trees.common.Status.SUCCESS
+            if (active and queue)
+            else py_trees.common.Status.FAILURE
+        )
+        if status != self._last_status:
+            self._ros_logger.info(
+                f"{self.name}: transition {self._last_status} -> {status.name} "
+                f"(barrel_active={active}, queue_size={len(queue) if queue else 0})"
+            )
+            self._last_status = status
+        return status
 
 # --- NAVIGATION ----
 
@@ -93,8 +127,21 @@ class RecomputeNotRequested(py_trees.behaviour.Behaviour):
         self._flag_key = flag_key
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=flag_key, access=py_trees.common.Access.READ)
+        self._last_status: py_trees.common.Status | None = None
+
+    def setup(self, **kwargs):
+        self._node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
 
     def update(self) -> py_trees.common.Status:
-        if self.bb.get(self._flag_key):
-            return py_trees.common.Status.FAILURE
-        return py_trees.common.Status.SUCCESS
+        flag = self.bb.get(self._flag_key)
+        status = (
+            py_trees.common.Status.FAILURE if flag else py_trees.common.Status.SUCCESS
+        )
+        if status != self._last_status:
+            self._ros_logger.info(
+                f"{self.name}: transition {self._last_status} -> {status.name} "
+                f"({self._flag_key}={flag})"
+            )
+            self._last_status = status
+        return status

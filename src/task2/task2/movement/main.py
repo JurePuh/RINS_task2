@@ -40,18 +40,28 @@ def main() -> None:
     tree.setup(node_name="movement", timeout=15.0)
     assert tree.node is not None, "tree.node must be set after setup()"
     node = tree.node
+    logger = node.get_logger()
+
+    logger.info(
+        f"movement node setup complete; root='{tree.root.name}' "
+        f"tick_period_ms={_TICK_PERIOD_MS} (print_on_change={_PRINT_TREE_ON_CHANGE})"
+    )
+    logger.debug(f"root children: {[c.name for c in tree.root.children]}")
 
     attach_person_subscription(node)
     attach_ring_subscription(node)
     attach_barrel_subscription(node)
+    logger.info("subscriptions attached: /face_detect, /ring_detect, /barrel_detect")
 
     tree.tick_tock(period_ms=_TICK_PERIOD_MS)
+    logger.info(f"tick-tock started at {1000.0 / _TICK_PERIOD_MS:.1f} Hz")
 
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        logger.info("KeyboardInterrupt received; shutting down movement node")
     finally:
+        logger.info("movement node shutting down (tree.shutdown + rclpy.try_shutdown)")
         tree.shutdown()
         rclpy.try_shutdown()
 

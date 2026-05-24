@@ -56,6 +56,11 @@ class ComputeBarrelDestination(py_trees.behaviour.Behaviour):
         queue = self.bb.get(bb.PENDING_BARRELS)
         assert queue is not None, "ComputeBarrelDestination: PENDING_BARRELS not found on blackboard"
         barrel: Barrel = queue[0]
+        self._ros_logger.debug(
+            f"{self.name}: inputs queue_size={len(queue)} "
+            f"barrel id={barrel.id} pos=({barrel.point.x:.2f},{barrel.point.y:.2f}) "
+            f"color={barrel.color} horiz={barrel.horizontal}"
+        )
 
         robot = lookup_robot_xy(self.tf_buffer, self._ros_logger)
         if robot is None:
@@ -71,9 +76,18 @@ class ComputeBarrelDestination(py_trees.behaviour.Behaviour):
         dy = robot[1] - barrel.point.y
         dist = math.hypot(dx, dy) or 1.0
         normal = Vector(dx / dist, dy / dist)
-        self.bb.set(
-            bb.BARREL_DESTINATION,
-            standoff_goal_from_normal(barrel.point, normal, standoff=_BARREL_STANDOFF_M),
+        goal = standoff_goal_from_normal(barrel.point, normal, standoff=_BARREL_STANDOFF_M)
+        self.bb.set(bb.BARREL_DESTINATION, goal)
+        gp = goal.pose.pose.position
+        self._ros_logger.info(
+            f"{self.name}: computed BARREL_DESTINATION for barrel {barrel.id} -> "
+            f"({gp.x:.2f}, {gp.y:.2f}); RECOMPUTE_BARREL_DESTINATION=False"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: robot=({robot[0]:.2f},{robot[1]:.2f}) "
+            f"barrel=({barrel.point.x:.2f},{barrel.point.y:.2f}) "
+            f"normal=({normal.x:.2f},{normal.y:.2f}) dist={dist:.2f} "
+            f"standoff={_BARREL_STANDOFF_M:.2f}"
         )
         return py_trees.common.Status.SUCCESS
 
@@ -136,6 +150,9 @@ class TurnTowardsBarrel(py_trees_ros.action_clients.FromConstant):
 
     def update(self):
         if self._skip:
+            self._ros_logger.info(
+                f"{self.name}: skipping spin (tf lookup failed in initialise)"
+            )
             return py_trees.common.Status.SUCCESS
         # Return status of spin
         return super().update()
@@ -161,8 +178,15 @@ class CheckBarrelLeak(py_trees.behaviour.Behaviour):
         barrel: Barrel = queue[0]
 
         # Set barrel as not leaking (for now)
+        prev = barrel.leaking
         barrel.leaking = False
-        self._ros_logger.info(f"[stub] barrel {barrel.id} marked not-leaking")
+        self._ros_logger.info(
+            f"[stub] barrel {barrel.id} marked not-leaking (was leaking={prev})"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: barrel {barrel.id} color={barrel.color} "
+            f"horiz={barrel.horizontal} pos=({barrel.point.x:.2f},{barrel.point.y:.2f})"
+        )
         return py_trees.common.Status.SUCCESS
 
 
@@ -183,7 +207,9 @@ class ClearActiveBarrel(py_trees.behaviour.Behaviour):
         
         # Remove seen barrel
         barrel: Barrel = queue.popleft()
-        self._ros_logger.info(f"cleared barrel {barrel.id} from queue")
+        self._ros_logger.info(
+            f"cleared barrel {barrel.id} from queue; remaining={len(queue)}"
+        )
         return py_trees.common.Status.SUCCESS
 
 

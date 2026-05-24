@@ -18,6 +18,7 @@ from task2.movement import blackboard as bb
 from task2.movement.behaviours._arm import SetArmPosition
 from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
 from task2.movement.behaviours.follow_path import Pose
+from task2.movement.log_utils import log_throttled
 from task2.movement.models import Tile, AnomalyTask
 
 
@@ -94,18 +95,31 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
         self._future: Future | None = None
 
     def setup(self, **kwargs):
-        node = kwargs["node"]
-        self._ros_logger: RcutilsLogger = node.get_logger()
-        self._client: Client = node.create_client(DetectAnomalies, "/detect_anomalies")
+        self._node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self._node.get_logger()
+        self._client: Client = self._node.create_client(DetectAnomalies, "/detect_anomalies")
 
     def initialise(self):
-        # Call service to detect anomaly in tile
+        task: AnomalyTask = self.bb.get(self._task_key)
+        next_idx = len(task.tiles)
+        self._ros_logger.info(
+            f"{self.name}: calling /detect_anomalies for color='{self._color}' "
+            f"tile_idx={next_idx}"
+        )
+        self._ros_logger.debug(
+            f"{self.name}: request payload = DetectAnomalies.Request() (empty); "
+            f"existing tiles={[t.broken for t in task.tiles]}"
+        )
         self._future = self._client.call_async(DetectAnomalies.Request())
 
     def update(self) -> py_trees.common.Status:
         if self._future is None:
             return py_trees.common.Status.FAILURE
         if not self._future.done():
+            log_throttled(
+                self._ros_logger, self._node, f"{self.name}.waiting", "debug",
+                f"{self.name}: waiting for /detect_anomalies response",
+            )
             return py_trees.common.Status.RUNNING
 
         # Update the task with the result
@@ -115,7 +129,8 @@ class CallAnomalyService(py_trees.behaviour.Behaviour):
         tile = Tile(index=len(task.tiles), broken=broken)
         task.tiles.append(tile)
         self._ros_logger.info(
-            f"{self.name}: result='{result_str}' -> tile {tile.index} broken={broken}"
+            f"{self.name}: result='{result_str}' -> tile {tile.index} broken={broken} "
+            f"(total tiles for {self._color}: {len(task.tiles)})"
         )
         return py_trees.common.Status.SUCCESS
 
@@ -149,6 +164,7 @@ class MoveToNextTile(py_trees_ros.action_clients.FromConstant):
     def initialise(self):
         super().initialise()
         self._ros_logger.info(f"{self.name}: drive forward")
+        self._ros_logger.debug(f"{self.name}: tile step = {_TILE_STEP_M:.2f}m")
 
 
 class MarkAnomalyInactive(py_trees.behaviour.Behaviour):
@@ -160,13 +176,20 @@ class MarkAnomalyInactive(py_trees.behaviour.Behaviour):
         self._flag_key = _ACTIVE_KEY_BY_COLOR[color]
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=self._flag_key, access=py_trees.common.Access.WRITE)
+        self.bb.register_key(key=self._flag_key, access=py_trees.common.Access.READ)
 
     def setup(self, **kwargs):
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
 
     def update(self) -> py_trees.common.Status:
+        try:
+            prev = self.bb.get(self._flag_key)
+        except Exception:
+            prev = "?"
         self.bb.set(self._flag_key, False)
-        self._ros_logger.info(f"{self.name}: cleared {self._flag_key}")
+        self._ros_logger.info(
+            f"{self.name}: cleared {self._flag_key} (was {prev} -> False)"
+        )
         return py_trees.common.Status.SUCCESS
 
 
