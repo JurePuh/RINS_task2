@@ -17,6 +17,12 @@ def generate_launch_description():
         ),
         Node(
             package='task2',
+            executable='detect_anomalies',
+            name='detect_anomalies',
+            output='screen',
+        ),
+        Node(
+            package='task2',
             executable='speak',
             name='speak',
             output='screen',
@@ -31,6 +37,12 @@ def generate_launch_description():
             package='task2',
             executable='map_query',
             name='map_query',
+            output='screen',
+        ),
+        Node(
+            package='task2',
+            executable='line_fit',
+            name='line_fit',
             output='screen',
         ),
         Node(

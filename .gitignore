@@ -23,3 +23,4 @@ src/task2/task2/anomaly_detection/ssn/common/__pycache__/*
 src/task2/task2/anomaly_detection/ssn/__pycache__/*
 src/task2/task2/blue_line/__pycache__/*
 src/task2/task2/movement/report/__pycache__/*
+src/task2/task2/line_fit/__pycache__/*

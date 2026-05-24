@@ -17,6 +17,12 @@ def generate_launch_description():
         ),
         Node(
             package='task2',
+            executable='line_fit',
+            name='line_fit',
+            output='screen',
+        ),
+        Node(
+            package='task2',
             executable='blue_line',
             name='blue_line',
             output='screen',

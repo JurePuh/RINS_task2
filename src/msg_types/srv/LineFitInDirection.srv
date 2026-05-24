@@ -1,0 +1,20 @@
+# Robot-frame direction (rad) of the cone's bisector. 0 = forward, +pi/2 = left.
+float32 direction
+# Half-width of the angular cone around `direction`. e.g. pi/4 -> 90 deg total cone.
+float32 cone_half_width
+# Maximum lidar range to consider (m). Beams beyond are dropped.
+float32 max_range
+---
+bool success
+# Perpendicular distance from base_link origin to the fitted line (m, >= 0).
+float32 perp_distance
+# Yaw (rad, CCW positive) the robot must rotate so that `direction` points
+# along the line's inward normal -- i.e. the cone bisector becomes perpendicular
+# to the line.
+float32 yaw_to_perp
+# 2D line equation in base_link frame: normal_x * x + normal_y * y = offset.
+# (normal_x, normal_y) is the unit normal pointing FROM the line TOWARD base_link.
+# offset == perp_distance (kept as a separate field for clarity / sign).
+float32 normal_x
+float32 normal_y
+float32 offset

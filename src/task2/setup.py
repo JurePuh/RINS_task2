@@ -33,6 +33,7 @@ setup(
             'movement = task2.movement.main:main',
             'speak = task2.speak.main:main',
             'map_query = task2.map_query.main:main',
+            'line_fit = task2.line_fit.main:main',
             'detect_anomalies = task2.anomaly_detection.main:main',
             'blue_line = task2.blue_line.main:main',
         ],

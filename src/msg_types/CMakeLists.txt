@@ -20,6 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ClassifyFace.srv"
   "srv/DetectAnomalies.srv"
   "srv/WallNormalAt.srv"
+  "srv/LineFitInDirection.srv"
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
