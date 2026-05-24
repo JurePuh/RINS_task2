@@ -33,7 +33,7 @@ class Pose:
 class Ring:
     point: Point
     color: str
-    id: str
+    id: int
 
     @property
     def x(self) -> float:
@@ -46,7 +46,7 @@ class Ring:
 
 @dataclass
 class Barrel:
-    id: str
+    id: int
     point: Point
     color: str
     horizontal: bool
@@ -68,7 +68,7 @@ class Gender(Enum):
 @dataclass
 class Person:
     point: Point
-    face_id: str
+    face_id: int
     name: str = ""
     role: str = ""
     gender: Gender | None = None
