@@ -1,5 +1,5 @@
 """
-ROS 2 service: top camera RGB — intensity mask, quad warp, SuperSimpleNet anomaly check.
+ROS 2 service: top camera RGB - intensity mask, quad warp, SuperSimpleNet anomaly check.
 
 Run: ros2 run task2 detect_anomalies
 Call: ros2 service call /detect_anomalies msg_types/srv/DetectAnomalies {}
@@ -287,9 +287,6 @@ class DetectAnomaliesNode(Node):
 
         self.get_logger().info(f"anomaly score={score:.4f} threshold={self.detector.score_threshold}")
 
-        if score <= self.detector.score_threshold:
-            return RESULT_NOT_DEFECTED, None
-
         peak_thr = float(self.get_parameter("anomaly_peak_mask_threshold").value)
         peak_mask = (anomaly_map > peak_thr).astype(np.uint8) * 255
         if peak_mask.shape[:2] != warped.shape[:2]:
@@ -311,52 +308,62 @@ class DetectAnomaliesNode(Node):
 
         images = {
             "pile_warp": warped,
+            "anomaly_mask": peak_mask,
+        }
+
+        if score <= self.detector.score_threshold:
+            return RESULT_NOT_DEFECTED, images
+
+        images.update({
             "detect_anomalies": vis,
             "intensity_mask": mask_bgr,
             "anomaly_heatmap": overlay,
-            "anomaly_mask": peak_mask,
-        }
+        })
         return RESULT_DEFECTED, images
 
-    def _save_defect_images(self, images: dict[str, np.ndarray]) -> str:
+    def _save_result_images(self, images: dict[str, np.ndarray]) -> dict[str, str]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         out_dir = os.path.join(self._output_root, stamp)
         os.makedirs(out_dir, exist_ok=True)
+        paths = {}
         for name, img in images.items():
             path = os.path.join(out_dir, f"{name}.png")
             if not cv2.imwrite(path, img):
                 raise OSError(f"failed to write {path}")
-        self.get_logger().info(f"saved defect images to {out_dir}")
-        return out_dir
+            paths[name] = path
+        self.get_logger().info(f"saved anomaly detection images to {out_dir}")
+        return paths
 
     def _handle_detect(self, request, response):
         del request
+        response.result = RESULT_NOT_FOUND
+        response.pile_path = ""
+        response.mask_path = ""
+
         msg = self._wait_fresh_frame(previous_stamp_ns=None)
         if msg is None:
             self.get_logger().warn(f"no frame on {self._image_topic} within {self._frame_timeout}s")
-            response.result = RESULT_NOT_FOUND
             return response
 
         try:
             cv_image = self._bridge.imgmsg_to_cv2(msg, "bgr8")
         except CvBridgeError as e:
             self.get_logger().error(str(e))
-            response.result = RESULT_NOT_FOUND
             return response
 
         if cv_image is None or cv_image.size == 0:
             self.get_logger().warn("empty image")
-            response.result = RESULT_NOT_FOUND
             return response
 
         result, images = self._run_pipeline(cv_image)
-        if result == RESULT_DEFECTED and images is not None:
+        if images is not None:
             try:
-                self._save_defect_images(images)
+                paths = self._save_result_images(images)
             except OSError as e:
                 self.get_logger().error(str(e))
-                response.result = RESULT_NOT_FOUND
                 return response
+            response.pile_path = paths.get("pile_warp", "")
+            response.mask_path = paths.get("anomaly_mask", "")
 
         response.result = result
         self.get_logger().info(f"detect_anomalies -> {response.result}")
