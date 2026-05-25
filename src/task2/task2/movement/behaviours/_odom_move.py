@@ -1,23 +1,4 @@
 """Reusable odom-driven motion behaviours that publish TwistStamped directly.
-
-These bypass nav2's Spin / DriveOnHeading recovery actions, which abort when
-the projected footprint touches an inflated cell in the local costmap — a
-common situation when working very close to a wall (e.g. at the belt).
-
-Three behaviours are exposed:
-
-- `SpinByYaw`              — odom-only rotation by a target yaw delta.
-- `ApproachToWallDistance` — query /line_fit_in_direction in a given direction,
-                             then odom-drive forward/back so the queried wall
-                             sits at a target perpendicular distance.
-- `DriveTileWithCorrection` — odom-drive a fixed straight distance while
-                              periodically re-querying /line_fit_in_direction
-                              in a lateral direction and applying a small
-                              angular correction to maintain a constant
-                              perpendicular distance to the wall.
-
-All three take all tunables as `__init__` parameters with sensible defaults,
-so callers in mission code only need to pass their targets.
 """
 
 from __future__ import annotations
@@ -41,7 +22,7 @@ from task2.movement.log_utils import log_throttled
 
 # ── Default tunables ─────────────────────────────────────────────────────────
 
-_ANGULAR_SPEED = 0.6          # rad/s
+_ANGULAR_SPEED = 0.5          # rad/s
 _LINEAR_SPEED = 0.15          # m/s
 _YAW_TOLERANCE = 0.02         # ~1.1 deg
 _DIST_TOLERANCE = 0.01        # 1 cm
@@ -203,6 +184,291 @@ class SpinByYaw(py_trees.behaviour.Behaviour):
             self._logger.info(f"{self.name}: terminate (status={new_status})")
 
 
+# ── OrientRelativeToWall ─────────────────────────────────────────────────────
+
+
+class OrientRelativeToWall(py_trees.behaviour.Behaviour):
+    """Find a wall via /line_fit_in_direction, then spin so the robot ends up
+    at `target_yaw_rel_wall_rad` relative to that wall's inward normal.
+
+    After the odom-tracked spin completes, re-queries line_fit (this time at
+    `direction = -target_yaw_rel_wall_rad`, where the wall *should* be in the
+    post-spin robot frame) and reads the residual `yaw_to_perp` as the actual
+    angular error. If it's above `verify_tolerance`, spins by that residual and
+    re-verifies — up to `max_corrections` times. This closes the loop against
+    odometry drift during the spin.
+
+    Fallback: if line_fit returns success=False or times out within the query
+    phase, fall back to a blind spin of `wall_direction_rad + target_yaw_rel_wall_rad`.
+    A verify-phase failure is non-fatal: we accept the current orientation and
+    return SUCCESS, since aborting here would leave the parent sequence stuck.
+    """
+
+    _PHASE_QUERYING = "querying"
+    _PHASE_SPINNING = "spinning"
+    _PHASE_VERIFYING = "verifying"
+
+    def __init__(
+        self,
+        wall_direction_rad: float,
+        target_yaw_rel_wall_rad: float,
+        angular_speed: float = _ANGULAR_SPEED,
+        yaw_tolerance: float = _YAW_TOLERANCE,
+        cone_half_width: float = _LINE_FIT_CONE_HALF_WIDTH,
+        max_range: float = _LINE_FIT_MAX_RANGE,
+        query_timeout_s: float = 3.0,
+        timeout_s: float = 15.0,
+        verify_tolerance: float = 0.04,
+        max_corrections: int = 3,
+        name: str = "OrientRelativeToWall",
+    ) -> None:
+        super().__init__(name=name)
+        self._wall_direction = float(wall_direction_rad)
+        self._target_rel_wall = float(target_yaw_rel_wall_rad)
+        self._angular_speed = float(angular_speed)
+        self._yaw_tolerance = float(yaw_tolerance)
+        self._cone_half_width = float(cone_half_width)
+        self._max_range = float(max_range)
+        self._query_timeout_s = float(query_timeout_s)
+        self._timeout_s = float(timeout_s)
+        self._verify_tolerance = float(verify_tolerance)
+        self._max_corrections = int(max_corrections)
+
+        self._node: Optional[Node] = None
+        self._logger: Optional[RcutilsLogger] = None
+        self._cmd_pub: Optional[Publisher] = None
+        self._client: Optional[Client] = None
+        self._latest_odom: Optional[Odometry] = None
+
+        # Per-tick state, reset in initialise().
+        self._phase: str = self._PHASE_QUERYING
+        self._future: Optional[Future] = None
+        self._target: float = 0.0  # total spin, set after query resolves
+        self._start_yaw: float = 0.0
+        self._prev_yaw: float = 0.0
+        self._unwrapped_delta: float = 0.0
+        self._t_start: float = 0.0
+        self._t_query_start: float = 0.0
+        self._spin_started: bool = False
+        self._corrections_done: int = 0
+
+    def setup(self, **kwargs) -> None:
+        self._node = kwargs["node"]
+        self._logger = self._node.get_logger()
+        self._cmd_pub = self._node.create_publisher(TwistStamped, "/cmd_vel", 10)
+        self._client = self._node.create_client(
+            LineFitInDirection, "/line_fit_in_direction"
+        )
+        self._node.create_subscription(Odometry, "/odom", self._on_odom, 10)
+        self._logger.debug(f"{self.name}.setup complete")
+
+    def _on_odom(self, msg: Odometry) -> None:
+        self._latest_odom = msg
+
+    def initialise(self) -> None:
+        req = LineFitInDirection.Request()
+        req.direction = self._wall_direction
+        req.cone_half_width = self._cone_half_width
+        req.max_range = self._max_range
+        self._future = self._client.call_async(req)  # type: ignore[union-attr]
+        self._phase = self._PHASE_QUERYING
+        self._target = 0.0
+        self._start_yaw = 0.0
+        self._prev_yaw = 0.0
+        self._unwrapped_delta = 0.0
+        self._spin_started = False
+        self._corrections_done = 0
+        now = _now_seconds(self._node)  # type: ignore[arg-type]
+        self._t_start = now
+        self._t_query_start = now
+        self._logger.info(  # type: ignore[union-attr]
+            f"{self.name}: querying line_fit (wall_dir={self._wall_direction:+.3f}, "
+            f"cone={self._cone_half_width:.3f}, max_range={self._max_range:.2f}), "
+            f"target_rel_wall={self._target_rel_wall:+.3f} rad, "
+            f"verify_tol={self._verify_tolerance:.3f}, max_corrections={self._max_corrections}"
+        )
+
+    def _start_spin(self, total_spin: float, source: str) -> None:
+        self._target = total_spin
+        if self._latest_odom is not None:
+            self._start_yaw = _yaw_from_odom(self._latest_odom)
+        else:
+            self._start_yaw = 0.0
+        self._prev_yaw = self._start_yaw
+        self._unwrapped_delta = 0.0
+        self._phase = self._PHASE_SPINNING
+        self._spin_started = True
+        self._logger.info(  # type: ignore[union-attr]
+            f"{self.name}: spin phase ({source}) — total_spin={self._target:+.3f} rad, "
+            f"start_yaw={self._start_yaw:+.3f}, speed={self._angular_speed:.2f} rad/s"
+        )
+
+    def update(self) -> py_trees.common.Status:
+        elapsed = _now_seconds(self._node) - self._t_start  # type: ignore[arg-type]
+        if elapsed > self._timeout_s:
+            # Stop moving + fail
+            self._cmd_pub.publish(_zero_twist(self._node))  # type: ignore[union-attr]
+            self._logger.warning(  # type: ignore[union-attr]
+                f"{self.name}: TIMEOUT after {elapsed:.2f}s in phase '{self._phase}'"
+            )
+            return py_trees.common.Status.FAILURE
+
+        if self._phase == self._PHASE_QUERYING:
+            return self._tick_querying()
+        if self._phase == self._PHASE_SPINNING:
+            return self._tick_spinning()
+        return self._tick_verifying()
+
+    def _tick_querying(self) -> py_trees.common.Status:
+        # Did not respond yet.
+        if self._future is not None and not self._future.done():
+            if (_now_seconds(self._node) - self._t_query_start) > self._query_timeout_s:  # type: ignore[arg-type]
+                # Start fallhack spin (wanted relative-to-wall spin at end)
+                self._logger.warning(  # type: ignore[union-attr]
+                    f"{self.name}: line_fit query timed out after "
+                    f"{self._query_timeout_s:.2f}s — falling back to blind spin"
+                )
+                self._future.cancel()
+                self._future = None
+                self._start_spin(self._wall_direction + self._target_rel_wall, source="fallback:query_timeout")
+                return py_trees.common.Status.RUNNING
+            log_throttled(
+                self._logger, self._node, f"{self.name}.waiting", "debug",  # type: ignore[arg-type]
+                f"{self.name}: waiting for line_fit response",
+            )
+            return py_trees.common.Status.RUNNING
+
+        # Responded, but failed.
+        resp: LineFitInDirection.Response = self._future.result()  # type: ignore[assignment, union-attr]
+        self._future = None
+        if resp is None or not resp.success:
+            # Fallback: assume the wall is exactly where the caller said it was
+            # (at `wall_direction_rad` in robot frame), then apply the relative offset.
+            fallback_total = self._wall_direction + self._target_rel_wall
+            self._logger.warning(  # type: ignore[union-attr]
+                f"{self.name}: line_fit success=False — falling back to blind spin "
+                f"of {fallback_total:+.3f} rad "
+                f"(wall_dir={self._wall_direction:+.3f} + target_rel={self._target_rel_wall:+.3f})"
+            )
+            self._start_spin(fallback_total, source="fallback:no_fit")
+            return py_trees.common.Status.RUNNING
+
+        # Responded with success, spin to the target relative to the wall's normal.
+        total = float(resp.yaw_to_perp) + self._target_rel_wall
+        self._logger.info(  # type: ignore[union-attr]
+            f"{self.name}: line_fit perp_distance={resp.perp_distance:.3f} m, "
+            f"yaw_to_perp={resp.yaw_to_perp:+.3f} rad, "
+            f"target_rel_wall={self._target_rel_wall:+.3f} -> total_spin={total:+.3f}"
+        )
+        self._start_spin(total, source="line_fit")
+        return py_trees.common.Status.RUNNING
+
+    def _tick_spinning(self) -> py_trees.common.Status:
+        if self._latest_odom is None:
+            log_throttled(
+                self._logger, self._node, f"{self.name}.no_odom", "debug",  # type: ignore[arg-type]
+                f"{self.name}: waiting for /odom",
+            )
+            return py_trees.common.Status.RUNNING
+
+        current_yaw = _yaw_from_odom(self._latest_odom)
+        wrapped_step = _wrap_to_pi(current_yaw - self._prev_yaw)
+        self._unwrapped_delta += wrapped_step
+        self._prev_yaw = current_yaw
+        remaining = self._target - self._unwrapped_delta
+
+        if abs(remaining) < self._yaw_tolerance:
+            self._cmd_pub.publish(_zero_twist(self._node))  # type: ignore[union-attr]
+            self._logger.info(  # type: ignore[union-attr]
+                f"{self.name}: spin done — rotated {self._unwrapped_delta:+.3f} rad "
+                f"(target {self._target:+.3f}, residual {remaining:+.3f}) — entering verify"
+            )
+            self._start_verify_query()
+            return py_trees.common.Status.RUNNING
+
+        cmd = _zero_twist(self._node)  # type: ignore[arg-type]
+        cmd.twist.angular.z = math.copysign(self._angular_speed, remaining)
+        self._cmd_pub.publish(cmd)  # type: ignore[union-attr]
+        log_throttled(
+            self._logger, self._node, f"{self.name}.spinning", "debug",  # type: ignore[arg-type]
+            f"{self.name}: remaining={remaining:+.3f} rad, "
+            f"angular.z={cmd.twist.angular.z:+.2f}",
+        )
+        return py_trees.common.Status.RUNNING
+
+    def _start_verify_query(self) -> None:
+        # After spinning to target_yaw_rel_wall, the wall's inward normal is at
+        # angle -target_yaw_rel_wall in the post-spin robot frame. Query there;
+        # the response's yaw_to_perp is exactly the residual angular error.
+        req = LineFitInDirection.Request()
+        req.direction = -self._target_rel_wall
+        req.cone_half_width = self._cone_half_width
+        req.max_range = self._max_range
+        self._future = self._client.call_async(req)  # type: ignore[union-attr]
+        self._phase = self._PHASE_VERIFYING
+        self._t_query_start = _now_seconds(self._node)  # type: ignore[arg-type]
+
+    def _tick_verifying(self) -> py_trees.common.Status:
+        # Service slow → accept current orientation rather than getting stuck.
+        if self._future is not None and not self._future.done():
+            if (_now_seconds(self._node) - self._t_query_start) > self._query_timeout_s:  # type: ignore[arg-type]
+                self._logger.warning(  # type: ignore[union-attr]
+                    f"{self.name}: verify query timed out — accepting current orientation"
+                )
+                self._future.cancel()
+                self._future = None
+                return py_trees.common.Status.SUCCESS
+            log_throttled(
+                self._logger, self._node, f"{self.name}.verify_wait", "debug",  # type: ignore[arg-type]
+                f"{self.name}: waiting for verify line_fit",
+            )
+            return py_trees.common.Status.RUNNING
+
+        resp: LineFitInDirection.Response = self._future.result()  # type: ignore[assignment, union-attr]
+        self._future = None
+        if resp is None or not resp.success:
+            self._logger.warning(  # type: ignore[union-attr]
+                f"{self.name}: verify line_fit success=False — accepting current orientation"
+            )
+            return py_trees.common.Status.SUCCESS
+
+        error = float(resp.yaw_to_perp)
+        if abs(error) < self._verify_tolerance:
+            self._logger.info(  # type: ignore[union-attr]
+                f"{self.name}: SUCCESS — verified error={error:+.4f} rad "
+                f"(tol={self._verify_tolerance:.3f}, corrections={self._corrections_done})"
+            )
+            return py_trees.common.Status.SUCCESS
+
+        if self._corrections_done >= self._max_corrections:
+            self._logger.warning(  # type: ignore[union-attr]
+                f"{self.name}: SUCCESS (capped) — error={error:+.4f} rad still above "
+                f"tol={self._verify_tolerance:.3f} after {self._corrections_done} corrections"
+            )
+            return py_trees.common.Status.SUCCESS
+
+        self._corrections_done += 1
+        self._logger.info(  # type: ignore[union-attr]
+            f"{self.name}: verify error={error:+.4f} rad > tol — correction "
+            f"{self._corrections_done}/{self._max_corrections}"
+        )
+        self._start_spin(error, source=f"correction:{self._corrections_done}")
+        return py_trees.common.Status.RUNNING
+
+    def terminate(self, new_status: py_trees.common.Status) -> None:
+        if self._cmd_pub is not None and self._node is not None:
+            self._cmd_pub.publish(_zero_twist(self._node))
+        if (
+            new_status == py_trees.common.Status.INVALID
+            and self._future is not None
+            and not self._future.done()
+        ):
+            self._future.cancel()
+        self._future = None
+        if self._logger is not None:
+            self._logger.info(f"{self.name}: terminate (status={new_status})")
+
+
 # ── ApproachToWallDistance ───────────────────────────────────────────────────
 
 
@@ -211,15 +477,8 @@ class ApproachToWallDistance(py_trees.behaviour.Behaviour):
     current heading so the queried wall sits at `target_distance_m` perpendicular
     distance.
 
-    Two internal phases: "querying" (waiting for the service response) and
-    "driving" (odom-based linear motion). On a service failure returns FAILURE.
-
-    Note on geometry: traveling `d` meters along the current heading reduces
-    the queried perp distance by `d * cos(angle_to_perpendicular)`. If the
-    robot is not facing the wall perpendicularly the final perp distance
-    under-approaches the target by that cosine factor. For the modest yaw
-    misalignments coming out of GoToBelt this is acceptable; the residual gets
-    cleaned up by `DriveTileWithCorrection`'s lateral loop later.
+    If |cos_perp| < 0.1 we abort (wall is nearly parallel to the drive
+    direction, geometry is degenerate or the wall isn't where the caller said).
     """
 
     _PHASE_QUERYING = "querying"
@@ -322,7 +581,18 @@ class ApproachToWallDistance(py_trees.behaviour.Behaviour):
             )
             return py_trees.common.Status.RUNNING
 
-        self._target_drive = float(resp.perp_distance) - self._target_distance
+        misalignment = float(resp.yaw_to_perp) - self._direction
+        cos_misalign = math.cos(misalignment)
+        if abs(cos_misalign) < 0.1:
+            self._logger.warning(  # type: ignore[union-attr]
+                f"{self.name}: wall too oblique to drive into "
+                f"(yaw_to_perp={resp.yaw_to_perp:+.3f}, direction={self._direction:+.3f}, "
+                f"cos={cos_misalign:+.3f}) — aborting"
+            )
+            return py_trees.common.Status.FAILURE
+
+        raw_drive = float(resp.perp_distance) - self._target_distance
+        self._target_drive = raw_drive / cos_misalign
         pose = self._latest_odom.pose.pose.position
         self._start_x = pose.x
         self._start_y = pose.y
@@ -330,7 +600,9 @@ class ApproachToWallDistance(py_trees.behaviour.Behaviour):
         self._phase = self._PHASE_DRIVING
         self._logger.info(  # type: ignore[union-attr]
             f"{self.name}: line_fit perp_distance={resp.perp_distance:.3f} m, "
-            f"target={self._target_distance:.3f} m, drive={self._target_drive:+.3f} m "
+            f"target={self._target_distance:.3f} m, "
+            f"misalign={misalignment:+.3f} rad (cos={cos_misalign:+.3f}), "
+            f"raw_drive={raw_drive:+.3f} -> compensated_drive={self._target_drive:+.3f} m "
             f"(start xy=({self._start_x:.3f}, {self._start_y:.3f}), "
             f"start_yaw={self._start_yaw:+.3f}) — phase=driving"
         )
@@ -387,35 +659,11 @@ class DriveTileWithCorrection(py_trees.behaviour.Behaviour):
     angular correction to hold the wall at `target_lateral_m` perpendicular
     distance.
 
-    Control law (per tick, with the latest cached error and error-rate):
-
-        angular_cmd = side_sign * (kp * error + kd * d_error_rate)
-
-    where `error = target_lateral - measured_perp_distance` and
-    `d_error_rate = (error - prev_error) / dt_between_service_responses`.
-
-    Why PD: pure P on position oscillates because the controller only knows
-    "I'm off", not "I'm getting closer". The D term provides damping — when
-    the error is rising (we're still closing in even after a previous P
-    correction), kd*d_error/dt pushes harder the other way *before* we
-    overshoot. The P term stays as a small bias so a steady offset still
-    gets corrected.
-
     Sign rule (wall on LEFT, lateral_direction ≈ +π/2): too close (error>0)
     => turn right (angular<0). With `side_sign = -sign(sin(lateral_dir))`,
     `side_sign = -1`, so positive error and positive d_error_rate both
     produce negative angular — correct. The right-wall case (`side_sign=+1`)
     flips both terms together.
-
-    `d_error_rate` is computed *on each new service response*, not every
-    tick: the underlying measurement only updates ~5 Hz, and a per-tick
-    derivative would divide by ~50 ms and explode the first tick after a
-    response arrived. Between responses we hold the last rate.
-
-    Future-upgrade seam: the optional `stop_predicate(traveled_m) -> bool`,
-    if provided, replaces the `traveled >= distance_m` check. Lets us add a
-    "drive until anomaly service stably sees a tile" variant later without
-    touching this class.
     """
 
     def __init__(

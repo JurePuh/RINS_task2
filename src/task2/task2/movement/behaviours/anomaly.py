@@ -21,7 +21,7 @@ from task2.movement.behaviours._nav import LoggingNavWaypoint, build_nav_goal
 from task2.movement.behaviours._odom_move import (
     ApproachToWallDistance,
     DriveTileWithCorrection,
-    SpinByYaw,
+    OrientRelativeToWall,
 )
 from task2.movement.behaviours.follow_path import Pose
 from task2.movement.log_utils import log_throttled
@@ -163,10 +163,19 @@ class MarkAnomalyInactive(py_trees.behaviour.Behaviour):
 
 def _build_for_color(color: str, belt_pose: Pose, tile_count: int, tile_step_distance: float) -> py_trees.composites.Sequence:
     seq = py_trees.composites.Sequence(name=f"Anomaly{color.capitalize()}", memory=True)
+    seq.add_child(SetArmPosition("look_at_belt_left", arm_settle_delay=0.0))
     seq.add_child(GoToBelt(color, belt_pose))
+    seq.add_child(OrientRelativeToWall(
+        wall_direction_rad=0.0,
+        target_yaw_rel_wall_rad=0.0,
+        name=f"SquareUpToBelt({color})",
+    ))
     seq.add_child(ApproachToWallDistance(target_distance_m=_BELT_DRIVE_DIST))
-    seq.add_child(SpinByYaw(target_yaw_delta_rad=_BELT_TURN_TO_DRIVE_YAW))
-    seq.add_child(SetArmPosition("look_at_belt_left"))
+    seq.add_child(OrientRelativeToWall(
+        wall_direction_rad=0.0,
+        target_yaw_rel_wall_rad=_BELT_TURN_TO_DRIVE_YAW,
+        name=f"FaceAlongBelt({color})",
+    ))
 
     seq.add_child(CallAnomalyService(color, name=f"Detect{0}({color})"))
     for i in range(1, tile_count):
@@ -179,6 +188,7 @@ def _build_for_color(color: str, belt_pose: Pose, tile_count: int, tile_step_dis
         seq.add_child(CallAnomalyService(color, name=f"Detect{i}({color})"))
     
     seq.add_child(MarkAnomalyInactive(color))
+    seq.add_child(SetArmPosition("garage", arm_settle_delay=0.0))
     return seq
 
 
