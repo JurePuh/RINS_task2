@@ -31,9 +31,21 @@ _STATUS_TOPIC: str = "/blue_line"
 # --- Detection parameters ----------------------------------------------------
 
 # Scanline: fraction of image height to sample (0 = top, 1 = bottom).
-_SCANLINE_FRAC: float = 0.75
+# This is the "back" row — the primary reference for line position.
+_SCANLINE_FRAC: float = 0.71
 
-# TODO: tune HSV thresholds against the simulator output.
+# A second "front" scanline is sampled this many pixels *above* the back row.
+# Used to compute a heading term (front - back): the line curves at corners
+# before it shifts at the back row, so this gives the controller advance warning.
+_SCANLINE_FRONT_OFFSET_PX: int = 10
+
+# Weights for combining position (back row) and heading (front - back) into the
+# published offset. Heading dominant, position small so the robot still keeps the
+# line in frame on long straights.
+_W_POS: float = 0.2
+_W_HEAD: float = 4.0
+
+# HSV thresholds for blue masking. Tune these if the line isn't detected reliably.
 _HSV_LOW: np.ndarray = np.array([90, 100, 255], dtype=np.uint8)
 _HSV_HIGH: np.ndarray = np.array([120, 130, 255], dtype=np.uint8)
 
@@ -67,6 +79,12 @@ class Segment:
 
     def center(self) -> float:
         return (self.start + self.end) / 2.0
+    
+    def left(self) -> int:
+        return self.start
+
+    def right(self) -> int:
+        return self.end
 
 
 # --- Pure helpers ------------------------------------------------------------
@@ -168,29 +186,44 @@ class BlueLineNode(Node):
         hsv: np.ndarray = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
         full_mask: np.ndarray = cv2.inRange(hsv, _HSV_LOW, _HSV_HIGH)
 
-        row_index: int = int(img_h * _SCANLINE_FRAC)
-        row_index = min(max(row_index, 0), img_h - 1)
-        row_mask: np.ndarray = full_mask[row_index, :]
+        back_row: int = int(img_h * _SCANLINE_FRAC)
+        back_row = min(max(back_row, 0), img_h - 1)
+        front_row: int = min(max(back_row - _SCANLINE_FRONT_OFFSET_PX, 0), img_h - 1)
 
-        segments: list[Segment] = _extract_segments(row_mask)
-        status: BlueLineStatus = self._classify(segments, img_w)
+        back_segs, back_state, back_l, back_r, back_ll, back_rr = self._row_offsets(full_mask, back_row, img_w)
+        front_segs, front_state, front_l, front_r, front_ll, front_rr = self._row_offsets(full_mask, front_row, img_w)
+
+        status = BlueLineStatus()
+        # State classification always follows the back row (matches old behaviour).
+        status.state = int(back_state)
+
+        if front_state == LineState.LOST:
+            # Graceful fallback: front row sees nothing, behave like the old
+            # single-row controller using just the back row.
+            status.offset_left = back_l
+            status.offset_right = back_r
+        else:
+            # Stanley-style combine: position (back) + heading (front - back).
+            status.offset_left = _W_POS * back_l + _W_HEAD * (front_ll - back_ll)
+            status.offset_right = _W_POS * back_r + _W_HEAD * (front_rr - back_rr)
+
         self._status_pub.publish(status)
 
         # Per-frame DEBUG heartbeat (throttled).
         if self._frame_idx % 30 == 0:
             self._logger.debug(
                 f"frame={self._frame_idx} state={LineState(status.state).name} "
-                f"segs={len(segments)} L={status.offset_left:+.2f} "
-                f"R={status.offset_right:+.2f}"
+                f"back_segs={len(back_segs)} front_segs={len(front_segs)} "
+                f"L={status.offset_left:+.2f} R={status.offset_right:+.2f}"
             )
 
         # Log state transitions with the values that caused them.
         new_state = LineState(status.state)
         if new_state != self._prev_state:
-            self._log_transition(self._prev_state, new_state, status, segments)
+            self._log_transition(self._prev_state, new_state, status, back_segs)
             self._prev_state = new_state
 
-        self._render_debug(bgr, full_mask, row_index, segments)
+        self._render_debug(bgr, full_mask, back_row, front_row, back_segs, front_segs)
 
     def _log_transition(
         self,
@@ -213,55 +246,63 @@ class BlueLineNode(Node):
         self,
         bgr: np.ndarray,
         full_mask: np.ndarray,
-        row_index: int,
-        segments: list[Segment],
+        back_row: int,
+        front_row: int,
+        back_segs: list[Segment],
+        front_segs: list[Segment],
     ) -> None:
         """Show a debug window: blue line painted black, segments drawn blue."""
         vis: np.ndarray = bgr.copy()
         # Paint detected blue pixels black so the line "disappears".
         vis[full_mask > 0] = (0, 0, 0)
 
-        # Draw a thin gray guide along the scanline.
-        cv2.line(vis, (0, row_index), (vis.shape[1] - 1, row_index), (80, 80, 80), 1)
+        # Draw thin gray guides along both scanlines.
+        cv2.line(vis, (0, back_row), (vis.shape[1] - 1, back_row), (80, 80, 80), 1)
+        cv2.line(vis, (0, front_row), (vis.shape[1] - 1, front_row), (80, 80, 80), 1)
 
-        # Overlay the kept segments in pure blue at the scanline.
         half: int = max(_SCANLINE_THICKNESS // 2, 1)
-        y0: int = max(row_index - half, 0)
-        y1: int = min(row_index + half + 1, vis.shape[0])
-        for seg in segments:
-            vis[y0:y1, seg.start:seg.end + 1] = (255, 0, 0)
+        # Back row in pure blue, front row in cyan to tell them apart.
+        for row, segs, color in (
+            (back_row, back_segs, (255, 0, 0)),
+            (front_row, front_segs, (255, 255, 0)),
+        ):
+            y0: int = max(row - half, 0)
+            y1: int = min(row + half + 1, vis.shape[0])
+            for seg in segs:
+                vis[y0:y1, seg.start:seg.end + 1] = color
 
         cv2.imshow(_DEBUG_WINDOW, vis)
         # Required for OpenCV to actually pump the GUI event loop.
         cv2.waitKey(1)
 
-    def _classify(self, segments: list[Segment], width: int) -> BlueLineStatus:
-        """Map detected segments to a BlueLineStatus message."""
-        msg = BlueLineStatus()
+    def _row_offsets(
+        self, full_mask: np.ndarray, row_index: int, width: int
+    ) -> tuple[list[Segment], LineState, float, float, float, float]:
+        """Sample one scanline and classify it. Returns (segments, state, L_center, R_center, L_left, R_right)."""
+        row_mask: np.ndarray = full_mask[row_index, :]
+        segments: list[Segment] = _extract_segments(row_mask)
 
         if len(segments) == 0:
-            # Nothing visible: report LOST with zeroed offsets.
-            msg.state = BlueLineStatus.STATE_LOST
-            msg.offset_left = 0.0
-            msg.offset_right = 0.0
-            return msg
+            return segments, LineState.LOST, 0.0, 0.0, 0.0, 0.0
 
         if len(segments) == 1:
-            # Single line: both offsets collapse to the same center.
             seg = segments[0]
-            offset: float = _to_normalized(seg.center(), width)
-            msg.state = BlueLineStatus.STATE_LINE
-            msg.offset_left = offset
-            msg.offset_right = offset
-            return msg
+            offset_center: float = _to_normalized(seg.center(), width)
+            offset_left: float = _to_normalized(seg.left(), width)
+            offset_right: float = _to_normalized(seg.right(), width)
+            return segments, LineState.LINE, offset_center, offset_center, offset_left, offset_right
 
         # Crossroad: pick the two widest, then order by x position.
         widest: list[Segment] = sorted(segments, key=lambda s: s.width(), reverse=True)[:2]
         left, right = sorted(widest, key=lambda s: s.start)
-        msg.state = BlueLineStatus.STATE_CROSSROAD
-        msg.offset_left = _to_normalized(left.center(), width)
-        msg.offset_right = _to_normalized(right.center(), width)
-        return msg
+        return (
+            segments,
+            LineState.CROSSROAD,
+            _to_normalized(left.center(), width),
+            _to_normalized(right.center(), width),
+            _to_normalized(left.left(), width),
+            _to_normalized(right.right(), width),
+        )
 
 
 def main(args: list[str] | None = None) -> None:

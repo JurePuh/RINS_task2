@@ -22,14 +22,15 @@ from msg_types.srv import ClassifyFace
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._arm import SetArmPosition
 from task2.movement.behaviours._nav import LoggingNavWaypoint, SERVICE_TIMEOUT_SEC, build_nav_goal
+from task2.movement.behaviours._odom_move import SpinByYaw
 from task2.movement.log_utils import log_throttled
 from task2.movement.models import Pose
 
 
-_CORRIDOR_ENTRANCE_POSE = Pose( 2.8, -0.2, -1.5)
+_CORRIDOR_ENTRANCE_POSE = Pose( 2.85, -0.2, -1.5)
 
 _FWD_SPEED = 0.25      # m/s forward while following the line
-_KP = 2.5              # proportional gain: angular.z = -_KP * offset
+_KP = 4.0              # proportional gain: angular.z = -_KP * offset
 _END_FRAMES = 10       # consecutive STATE_LOST frames after first LINE → done
 
 _END_LINE = "All anomalies inspected. I'd take a bow but I don't have hips."
@@ -212,28 +213,6 @@ class CheckIfAtCTO(py_trees.behaviour.Behaviour):
         self._future = None
 
 
-class UTurn(py_trees_ros.action_clients.FromConstant):
-    """Rotate 180deg in place using nav2's Spin recovery action."""
-
-    def __init__(self, name: str = "UTurn"):
-        goal = Spin.Goal()
-        goal.target_yaw = math.pi
-        super().__init__(
-            name=name,
-            action_type=Spin,
-            action_name="spin",
-            action_goal=goal,
-        )
-
-    def setup(self, **kwargs):
-        super().setup(**kwargs)
-        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
-
-    def initialise(self):
-        super().initialise()
-        self._ros_logger.info(f"{self.name}: spin 180deg")
-
-
 class GenerateReport(py_trees.behaviour.Behaviour):
     """Build the inspection PDF from blackboard task results and open it."""
 
@@ -351,7 +330,10 @@ def build() -> py_trees.composites.Sequence:
     check_or_turn = py_trees.composites.Selector(name="CTOorUTurn", memory=True)
     check_or_turn.add_children([
         CheckIfAtCTO(),
-        py_trees.decorators.SuccessIsFailure(name="UTurnThenRetry", child=UTurn()),
+        py_trees.decorators.SuccessIsFailure(
+            name="UTurnThenRetry",
+            child=SpinByYaw(target_yaw_delta_rad=math.pi, name="UTurn"),
+        ),
     ])
 
     loop_body = py_trees.composites.Sequence(name="FollowAndCheck", memory=True)
@@ -368,8 +350,8 @@ def build() -> py_trees.composites.Sequence:
         # TODO For debugging in ------
         GenerateReport(),
         # For debugging out -----
+        SetArmPosition("look_for_qr", arm_settle_delay=0.0),
         GoToCorridorEntrance(),
-        SetArmPosition("look_for_qr"),
         cto_loop,
         GenerateReport(),
     ])
