@@ -14,8 +14,28 @@ from task2.movement.models import (
 
 
 ROBOT_NAME = "R2D2"
-_IMG_W = 70  # mm
-_IMG_PAIR_W = 60
+_IMG_W = 40  # mm
+_IMG_PAIR_W = 30
+
+
+def _image_height_mm(path: str, width_mm: float) -> float:
+    """Compute rendered height of an image at the given width, preserving aspect ratio."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            w, h = im.size
+        if w <= 0:
+            return width_mm * 0.75
+        return width_mm * (h / w)
+    except Exception:
+        return width_mm * 0.75  # fallback assumes 4:3
+
+
+def _ensure_space(pdf: FPDF, needed_mm: float) -> None:
+    """Add a new page if `needed_mm` of vertical space is not available."""
+    bottom_limit = pdf.h - pdf.b_margin
+    if pdf.get_y() + needed_mm > bottom_limit:
+        pdf.add_page()
 
 
 def build_report(tasks: list[tuple[Task, str]], out_dir: str, logger) -> str:
@@ -164,6 +184,8 @@ def _embed_image(pdf: FPDF, path: str | None, caption: str, width: float, logger
         logger.warn(f"report: missing image for {caption} (path={path!r}); skipping")
         pdf.cell(0, 6, f"  {caption}: (no image)", new_x="LMARGIN", new_y="NEXT")
         return
+    img_h = _image_height_mm(path, width)
+    _ensure_space(pdf, img_h + 5 + 2)  # caption line + image + spacing
     pdf.cell(0, 5, caption, new_x="LMARGIN", new_y="NEXT")
     pdf.image(path, w=width)
     pdf.ln(2)
@@ -171,6 +193,12 @@ def _embed_image(pdf: FPDF, path: str | None, caption: str, width: float, logger
 
 def _embed_tile_pair(pdf: FPDF, img: str | None, mask: str | None,
                      caption: str, logger) -> None:
+    pair_h = 0.0
+    if img and os.path.exists(img):
+        pair_h = max(pair_h, _image_height_mm(img, _IMG_PAIR_W))
+    if mask and os.path.exists(mask):
+        pair_h = max(pair_h, _image_height_mm(mask, _IMG_PAIR_W))
+    _ensure_space(pdf, pair_h + 5 + 3)  # caption + image row + spacing
     pdf.cell(0, 5, caption, new_x="LMARGIN", new_y="NEXT")
     y = pdf.get_y()
     x = pdf.get_x()
@@ -186,6 +214,6 @@ def _embed_tile_pair(pdf: FPDF, img: str | None, mask: str | None,
     else:
         logger.warn(f"report: missing tile mask for {caption} (img={img!r}, mask={mask!r})")
     if placed:
-        pdf.ln(_IMG_PAIR_W * 0.75 + 3)
+        pdf.ln(pair_h + 3)
     else:
         pdf.cell(0, 6, "  (no images)", new_x="LMARGIN", new_y="NEXT")
