@@ -21,6 +21,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/DetectAnomalies.srv"
   "srv/WallNormalAt.srv"
   "srv/LineFitInDirection.srv"
+  "srv/ConversePerson.srv"
+  "srv/DetectLeak.srv"
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

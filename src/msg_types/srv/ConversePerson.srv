@@ -1,0 +1,3 @@
+string gender # "male" "female"
+---
+string task # "anomaly_red" "anomaly_green" "inspect_barrels" "count_rings"
