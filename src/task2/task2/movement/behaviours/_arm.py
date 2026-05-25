@@ -10,15 +10,26 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from task2.movement.log_utils import log_throttled
 
 
-_ARM_SETTLE_SEC = 3.0
+_DEFAULT_ARM_SETTLE_SEC = 3.0
 
 
 class SetArmPosition(py_trees.behaviour.Behaviour):
-    """Publish an arm pose name on /arm_command, then RUNNING for ~1s to settle."""
+    """Publish an arm pose name on /arm_command, then RUNNING until the settle delay elapses.
 
-    def __init__(self, pose_string: str, name: str | None = None):
+    Pass ``arm_settle_delay=0.0`` for a fire-and-forget command that returns
+    SUCCESS on the first tick (useful when the arm should move in parallel
+    with subsequent driving behaviours).
+    """
+
+    def __init__(
+        self,
+        pose_string: str,
+        arm_settle_delay: float = _DEFAULT_ARM_SETTLE_SEC,
+        name: str | None = None,
+    ):
         super().__init__(name=name or f"SetArmPosition({pose_string})")
         self._pose_string = pose_string
+        self._settle_sec = arm_settle_delay
         self._deadline: float | None = None
 
     def setup(self, **kwargs):
@@ -32,9 +43,9 @@ class SetArmPosition(py_trees.behaviour.Behaviour):
         self._publisher.publish(msg)
         self._ros_logger.info(f"{self.name}: published '{self._pose_string}'")
         self._ros_logger.debug(
-            f"{self.name}: settle_sec={_ARM_SETTLE_SEC} pose_string='{self._pose_string}'"
+            f"{self.name}: settle_sec={self._settle_sec} pose_string='{self._pose_string}'"
         )
-        self._deadline = time.monotonic() + _ARM_SETTLE_SEC
+        self._deadline = time.monotonic() + self._settle_sec
 
     def update(self) -> py_trees.common.Status:
         if self._deadline is None or time.monotonic() >= self._deadline:
