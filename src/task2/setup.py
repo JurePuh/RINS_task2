@@ -39,6 +39,7 @@ setup(
             'detect_anomalies = task2.anomaly_detection.main:main',
             'blue_line = task2.blue_line.main:main',
             'conversation = task2.conversation.main:main',
+            'map_pose_printer = task2.map_pose_printer.main:main',
         ],
     },
 )
