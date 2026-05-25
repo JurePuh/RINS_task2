@@ -117,10 +117,12 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
         # Check if wall_normal_at returned yet
         if self._future is not None:
             if self._future.done() and self._future.result() is not None:
+                # returned - check if succeeded
                 resp: WallNormalAt.Response = self._future.result()  # type: ignore
                 point = Point(resp.point_x, resp.point_y)
                 normal = Vector(resp.normal_x, resp.normal_y)
                 if resp is not None and getattr(resp, "success", False):
+                    # succeeded - set goal and return SUCCESS
                     goal = standoff_goal_from_normal(point, normal)
                     self.bb.set(bb.FACE_DESTINATION, goal)
                     gp = goal.pose.pose.position
@@ -133,11 +135,13 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
                         f"normal=({normal.x:.2f},{normal.y:.2f})"
                     )
                     return py_trees.common.Status.SUCCESS
+                # failed
                 self._ros_logger.warning(
                     f"wall_normal_at returned failure for person {person.face_id}; fallback"
                 )
                 self._future = None
             else:
+                # didnt return yet - check for timeout
                 now = self.node.get_clock().now().nanoseconds * 1e-9
                 elapsed = now - self._start_time
                 if elapsed < SERVICE_TIMEOUT_SEC:
