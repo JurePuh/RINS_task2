@@ -1,5 +1,7 @@
-import os
 from glob import glob
+
+import os
+
 from setuptools import find_packages, setup
 
 package_name = 'task2'
@@ -14,7 +16,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
-    install_requires=['setuptools', 'fpdf2'],
+    install_requires=['setuptools', 'fpdf2', 'soniox', 'sounddevice'],
     zip_safe=True,
     maintainer='puhster',
     maintainer_email='jure@puh.si',
@@ -36,6 +38,7 @@ setup(
             'line_fit = task2.line_fit.main:main',
             'detect_anomalies = task2.anomaly_detection.main:main',
             'blue_line = task2.blue_line.main:main',
+            'conversation = task2.conversation.main:main',
         ],
     },
 )
