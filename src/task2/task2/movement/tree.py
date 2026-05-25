@@ -7,6 +7,7 @@ from msg_types.msg import FaceDetect, RingDetect, BarrelDetect
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours import room1, room2
+from task2.movement.viz import Visualizer
 from task2.movement.models import (
     AnomalyTask,
     Barrel,
@@ -66,7 +67,7 @@ def build_root() -> py_trees.behaviour.Behaviour:
 
 # --- Subscriptions to ROS topics, to update blackboard state from sensors ---
 
-def attach_person_subscription(node: rclpy.node.Node) -> None:
+def attach_person_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     logger = node.get_logger()
     reader = py_trees.blackboard.Client(name="person_subscription")
     reader.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.READ)
@@ -77,6 +78,8 @@ def attach_person_subscription(node: rclpy.node.Node) -> None:
         pending = reader.get(bb.PENDING_PEOPLE)
         handled = reader.get(bb.HANDLED_PEOPLE)
         pid = msg.id
+        # Mirror the new/updated person position to RViz.
+        viz.update_person(pid, msg.x, msg.y)
         logger.debug(
             f"on_person: id={pid} xy=({msg.x:.2f},{msg.y:.2f}) "
             f"pending={len(pending)} handled={len(handled)}"
@@ -114,7 +117,7 @@ def attach_person_subscription(node: rclpy.node.Node) -> None:
     logger.debug("subscribed to /face_detect")
 
 
-def attach_ring_subscription(node: rclpy.node.Node) -> None:
+def attach_ring_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     logger = node.get_logger()
     reader = py_trees.blackboard.Client(name="ring_subscription")
     reader.register_key(key=bb.TASK_COUNT_RINGS, access=py_trees.common.Access.READ)
@@ -122,6 +125,7 @@ def attach_ring_subscription(node: rclpy.node.Node) -> None:
     def on_ring(msg: RingDetect) -> None:
         task = reader.get(bb.TASK_COUNT_RINGS)
         rid = msg.id
+        viz.update_ring(rid, msg.x, msg.y, msg.color)
         logger.debug(
             f"on_ring: id={rid} color={msg.color} xy=({msg.x:.2f},{msg.y:.2f}) "
             f"known_total={len(task.rings)}"
@@ -147,7 +151,7 @@ def attach_ring_subscription(node: rclpy.node.Node) -> None:
     logger.debug("subscribed to /ring_detect")
 
 
-def attach_barrel_subscription(node: rclpy.node.Node) -> None:
+def attach_barrel_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     logger = node.get_logger()
     reader = py_trees.blackboard.Client(name="barrel_subscription")
     reader.register_key(key=bb.TASK_INSPECT_BARRELS, access=py_trees.common.Access.READ)
@@ -157,6 +161,7 @@ def attach_barrel_subscription(node: rclpy.node.Node) -> None:
         task = reader.get(bb.TASK_INSPECT_BARRELS)
         queue = reader.get(bb.PENDING_BARRELS)
         bid = msg.id
+        viz.update_barrel(bid, msg.x, msg.y, msg.color, msg.horizontal)
         logger.debug(
             f"on_barrel: id={bid} color={msg.color} horiz={msg.horizontal} "
             f"xy=({msg.x:.2f},{msg.y:.2f}) known_total={len(task.barrels)} "

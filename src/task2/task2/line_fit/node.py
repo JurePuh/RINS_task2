@@ -20,13 +20,9 @@ from typing import Optional
 import numpy as np
 import rclpy
 import tf2_ros
-from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Vector3
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import ColorRGBA, Header
-from visualization_msgs.msg import Marker, MarkerArray
 
 from msg_types.srv import LineFitInDirection
 
@@ -41,12 +37,6 @@ _MIN_POINTS_FOR_FIT = 15
 # RANSAC parameters.
 _RANSAC_ITERATIONS = 100
 _RANSAC_INLIER_THRESHOLD_M = 0.03
-
-# Marker visualisation: how far along the line direction to extend the
-# LINE_STRIP from the projected base_link point.
-_LINE_MARKER_HALF_LENGTH_M = 2.0
-_MARKER_LIFETIME_S = 5
-
 
 class LineFitInDirectionNode(Node):
     """Service node answering /line_fit_in_direction."""
@@ -69,14 +59,6 @@ class LineFitInDirectionNode(Node):
 
         self._srv = self.create_service(
             LineFitInDirection, "/line_fit_in_direction", self._handle
-        )
-
-        # Visualisation publishers.
-        self._line_pub = self.create_publisher(
-            Marker, "/line_fit_in_direction/fit_line", 10
-        )
-        self._inliers_pub = self.create_publisher(
-            MarkerArray, "/line_fit_in_direction/inliers", 10
         )
 
         self._logger = self.get_logger()
@@ -194,15 +176,13 @@ class LineFitInDirectionNode(Node):
         normal_angle = float(math.atan2(normal[1], normal[0]))
         yaw_to_perp = _wrap_to_pi(normal_angle - direction)
 
-        # ── Step 9: log + publish markers ─────────────────────────────────────
+        # ── Step 9: log ───────────────────────────────────────────────────────
         self._logger.info(
             f"line_fit: direction={direction:.3f}, cone={cone:.3f}, "
             f"points_in_cone={pts_in_cone.shape[0]}, inliers={inlier_count}, "
             f"perp_distance={perp_distance:.3f} m, yaw_to_perp={yaw_to_perp:.3f} rad, "
             f"normal=({normal[0]:.3f}, {normal[1]:.3f})"
         )
-        self._publish_line_marker(normal, offset)
-        self._publish_inlier_markers(pts_in_cone[inlier_mask])
 
         # ── Step 10: fill response ────────────────────────────────────────────
         response.success = True
@@ -248,69 +228,6 @@ class LineFitInDirectionNode(Node):
             f"TF base_link←{scan_frame}: tx={tx:.3f}, ty={ty:.3f}, yaw={yaw:.3f}"
         )
         return np.stack([xs, ys], axis=1)
-
-    # ── Visualisation ─────────────────────────────────────────────────────────
-
-    def _make_header(self) -> Header:
-        header = Header()
-        header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = "base_link"
-        return header
-
-    def _publish_line_marker(self, normal: np.ndarray, offset: float) -> None:
-        """Publish a LINE_STRIP for the fitted line in base_link, centred on the
-        projection of the origin onto the line."""
-        # Foot of perpendicular from origin to the line.
-        foot = normal * offset
-        # Direction along the line (perpendicular to the normal).
-        line_dir = np.array([-normal[1], normal[0]], dtype=float)
-        p1 = foot - line_dir * _LINE_MARKER_HALF_LENGTH_M
-        p2 = foot + line_dir * _LINE_MARKER_HALF_LENGTH_M
-
-        marker = Marker()
-        marker.header = self._make_header()
-        marker.ns = "line_fit"
-        marker.id = 0
-        marker.type = Marker.LINE_STRIP
-        marker.action = Marker.ADD
-        # Identity orientation — Marker() defaults to (0,0,0,0) which rviz
-        # rejects as an invalid quaternion and silently refuses to render.
-        marker.pose.orientation.w = 1.0
-        marker.points = [
-            Point(x=float(p1[0]), y=float(p1[1]), z=0.05),
-            Point(x=float(p2[0]), y=float(p2[1]), z=0.05),
-        ]
-        marker.scale = Vector3(x=0.03, y=0.0, z=0.0)
-        marker.color = ColorRGBA(r=0.2, g=1.0, b=0.2, a=1.0)
-        marker.lifetime = Duration(sec=_MARKER_LIFETIME_S)
-        self._line_pub.publish(marker)
-
-    def _publish_inlier_markers(self, inliers: np.ndarray) -> None:
-        """Publish a MarkerArray of small spheres for each RANSAC inlier."""
-        markers: list[Marker] = []
-
-        delete_all = Marker()
-        delete_all.header = self._make_header()
-        delete_all.ns = "line_fit_inliers"
-        delete_all.action = Marker.DELETEALL
-        markers.append(delete_all)
-
-        for i, (x, y) in enumerate(inliers):
-            dot = Marker()
-            dot.header = self._make_header()
-            dot.ns = "line_fit_inliers"
-            dot.id = i + 1  # 0 reserved for DELETEALL
-            dot.type = Marker.SPHERE
-            dot.action = Marker.ADD
-            dot.pose.position = Point(x=float(x), y=float(y), z=0.05)
-            dot.pose.orientation.w = 1.0  # see line marker comment
-            dot.scale = Vector3(x=0.04, y=0.04, z=0.04)
-            dot.color = ColorRGBA(r=0.0, g=0.8, b=1.0, a=0.9)
-            dot.lifetime = Duration(sec=_MARKER_LIFETIME_S)
-            markers.append(dot)
-
-        self._inliers_pub.publish(MarkerArray(markers=markers))
-
 
 def _wrap_to_pi(angle: float | np.ndarray) -> float | np.ndarray:
     """Wrap an angle (or array of angles) to (-pi, pi]."""

@@ -8,6 +8,7 @@ from task2.movement.tree import (
     attach_ring_subscription,
     build_root,
 )
+from task2.movement.viz import Visualizer
 
 
 # How often the tree ticks. 100 ms = 10 Hz.
@@ -48,9 +49,13 @@ def main() -> None:
     )
     logger.debug(f"root children: {[c.name for c in tree.root.children]}")
 
-    attach_person_subscription(node)
-    attach_ring_subscription(node)
-    attach_barrel_subscription(node)
+    # Visualizer owns all RViz markers; stash on node so behaviours can grab it.
+    viz = Visualizer(node)
+    node.visualizer = viz  # type: ignore[attr-defined]
+
+    attach_person_subscription(node, viz)
+    attach_ring_subscription(node, viz)
+    attach_barrel_subscription(node, viz)
     logger.info("subscriptions attached: /face_detect, /ring_detect, /barrel_detect")
 
     tree.tick_tock(period_ms=_TICK_PERIOD_MS)

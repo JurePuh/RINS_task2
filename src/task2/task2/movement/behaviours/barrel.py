@@ -170,7 +170,8 @@ class CheckBarrelLeak(py_trees.behaviour.Behaviour):
         )
 
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+        self.node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self.node.get_logger()
 
     def update(self) -> py_trees.common.Status:
         queue = self.bb.get(bb.PENDING_BARRELS)
@@ -180,6 +181,8 @@ class CheckBarrelLeak(py_trees.behaviour.Behaviour):
         # Set barrel as not leaking (for now)
         prev = barrel.leaking
         barrel.leaking = False
+        # Surface the leak result on the barrel's RViz marker.
+        self.node.visualizer.set_barrel_leak(barrel.id, bool(barrel.leaking))  # type: ignore[attr-defined]
         self._ros_logger.info(
             f"[stub] barrel {barrel.id} marked not-leaking (was leaking={prev})"
         )

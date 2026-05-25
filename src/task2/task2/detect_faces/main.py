@@ -13,7 +13,6 @@ import tf2_ros
 from geometry_msgs.msg import PoseStamped
 import tf2_geometry_msgs
 
-from visualization_msgs.msg import Marker
 from cv_bridge import CvBridge, CvBridgeError
 
 import cv2
@@ -55,7 +54,6 @@ class detect_faces(Node):
         self.model = YOLO("yolov8n.pt")
 
         # publishers
-        self.marker_pub = self.create_publisher(Marker, "/people_marker2", 10)
         # fires once per accepted face, ever
         self.face_pub = self.create_publisher(FaceDetect, "/face_detect", 10)
 
@@ -97,30 +95,6 @@ class detect_faces(Node):
             f"detect_faces started (device='{self.device}', accept_threshold={self.accept_threshold})"
         )
 
-    def build_marker(self, pc_msg: PointCloud2, map_pose: PoseStamped, face_id: int) -> Marker:
-        marker = Marker()
-        marker.header.frame_id = "map"
-        marker.header.stamp = pc_msg.header.stamp
-        marker.ns = "faces"
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        marker.id = face_id
-        marker.pose.position.x = map_pose.pose.position.x
-        marker.pose.position.y = map_pose.pose.position.y
-        marker.pose.position.z = map_pose.pose.position.z
-        marker.pose.orientation.w = 1.0
-
-        marker.scale.x = 0.2
-        marker.scale.y = 0.2
-        marker.scale.z = 0.2
-
-        marker.color.r = 1.0
-        marker.color.g = 0.0
-        marker.color.b = 0.0
-        marker.color.a = 1.0
-
-        return marker
-
     def seen(self, x: float, y: float) -> Face | None:
         """Return the matching potential face within 0.5 m, or None."""
         for face in self.potential_faces:
@@ -135,13 +109,10 @@ class detect_faces(Node):
                 return face
         return None
 
-    # Publishes marker + FaceDetect, marks key seen, removes from potential list.
+    # Publishes FaceDetect, marks key seen, removes from potential list.
     def _accept_face(self, face: Face, pc_msg: PointCloud2, map_pose: PoseStamped) -> None:
         face.id = self.id_counter
         self.id_counter += 1
-
-        marker = self.build_marker(pc_msg, map_pose, face.id)
-        self.marker_pub.publish(marker)
 
         msg = FaceDetect()
         msg.id = face.id
@@ -160,9 +131,6 @@ class detect_faces(Node):
         )
 
     def _republish_face(self, face: Face, pc_msg: PointCloud2, map_pose: PoseStamped) -> None:
-        marker = self.build_marker(pc_msg, map_pose, face.id)  # type: ignore[arg-type]
-        self.marker_pub.publish(marker)
-
         msg = FaceDetect()
         msg.id = face.id  # type: ignore[assignment]
         msg.x = face.x
@@ -195,13 +163,14 @@ class detect_faces(Node):
         pc_xyz = pc2.read_points_numpy(pc_msg, field_names=("x", "y", "z")) # type: ignore
         pc_xyz = pc_xyz.reshape((height, width, 3))
 
+        boxes = []
         for x in res:
-            bbox = x.boxes.xyxy # type: ignore
-            if bbox.nelement() == 0: # type: ignore
+            if x.boxes.xyxy.nelement() == 0: # type: ignore
                 continue
+            for b in x.boxes.xyxy: # type: ignore
+                boxes.append(b)
 
-            bbox = bbox[0]
-
+        for bbox in boxes:
             # bbox -> pixel rect (clamped to image)
             h, w = cv_image.shape[:2]
             x1 = max(0, int(float(bbox[0])))

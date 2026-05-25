@@ -316,7 +316,7 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
             )
             return py_trees.common.Status.FAILURE
 
-        person.name = resp.name
+        person.name = resp.name.split("_")[0]  # e.g. "alice_smith" -> "alice"
         person.role = resp.role
         try:
             person.gender = Gender(resp.gender)
@@ -326,6 +326,9 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
             f"classified person {person.face_id}: "
             f"name={person.name} role={person.role} gender={person.gender}"
         )
+        # Push the identity onto the person's RViz marker.
+        gender_str = person.gender.value if person.gender else None
+        self.node.visualizer.set_person_label(person.face_id, person.name, gender_str)  # type: ignore[attr-defined]
         return py_trees.common.Status.SUCCESS
 
     def terminate(self, new_status):

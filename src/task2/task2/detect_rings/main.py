@@ -9,7 +9,7 @@ from message_filters import ApproximateTimeSynchronizer
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data, QoSReliabilityPolicy
+from rclpy.qos import qos_profile_sensor_data
 
 import tf2_ros
 import tf2_geometry_msgs
@@ -18,7 +18,6 @@ from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2 as pc2
 from geometry_msgs.msg import PoseStamped
-from visualization_msgs.msg import Marker
 from msg_types.msg import RingDetect, SubjectClear
 
 
@@ -85,7 +84,6 @@ class DetectRings(Node):
 
         # --- ROS interfaces ---
         self.ring_pub = self.create_publisher(RingDetect, "/ring_detect", 10)
-        self.marker_pub = self.create_publisher(Marker, "/ring_marker2", QoSReliabilityPolicy.BEST_EFFORT)
         self.clear_ring_sub = self.create_subscription(
             SubjectClear,
             "/ring_clear",
@@ -118,26 +116,6 @@ class DetectRings(Node):
             f"dedup_distance={self.dedup_distance:.2f} min_ring_height_m={self.min_ring_height_m:.2f} "
             f"republish_move_threshold={self.republish_move_threshold:.3f}"
         )
-
-    # --- Marker -------------------------------------------------------------
-
-    def build_marker(self, pc_msg: PointCloud2, map_pose: PoseStamped, ring_id: Optional[int]) -> Marker:
-        marker = Marker()
-        marker.header.frame_id = "map"
-        marker.header.stamp = pc_msg.header.stamp
-        marker.type = Marker.SPHERE
-        marker.id = int(ring_id) if ring_id is not None else 0
-        marker.pose.position.x = map_pose.pose.position.x
-        marker.pose.position.y = map_pose.pose.position.y
-        marker.pose.position.z = map_pose.pose.position.z
-        marker.scale.x = 0.18
-        marker.scale.y = 0.18
-        marker.scale.z = 0.18
-        marker.color.r = 1.0
-        marker.color.g = 1.0
-        marker.color.b = 1.0
-        marker.color.a = 1.0
-        return marker
 
     # --- Dedup helpers ------------------------------------------------------
 
@@ -519,10 +497,6 @@ class DetectRings(Node):
                         self.publish_ring_msg(ring)
                     elif ring in self.visiting_rings:
                         self.maybe_republish(ring)
-
-            marker_id: Optional[int] = ring.id if (ring is not None and ring.id is not None) else 0
-            marker = self.build_marker(pc_msg, map_pose, marker_id)
-            self.marker_pub.publish(marker)
 
         cv2.imshow("ring_candidates", cv_image)
         if binary_preview is not None:
