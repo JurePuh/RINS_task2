@@ -13,6 +13,7 @@ from rclpy.time import Time
 from rclpy.impl.rcutils_logger import RcutilsLogger
 
 from msg_types.srv import ClassifyFace, WallNormalAt
+from msg_types.srv import ConversePerson as ConversePersonSrv
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import (
@@ -28,8 +29,11 @@ from task2.movement.log_utils import log_throttled
 from task2.movement.models import Gender, Person, Pose, Point, Vector
 
 
+# If True, ConversePerson calls the /converse_person service; if False, uses the stub list below.
+_USE_CONVERSATION_PERSON: bool = False
+
 # Stub: i-th person we converse with returns the i-th task string.
-_STUB_CONVERSATION_RESULTS = ["anomaly_red", "anomaly_green", "count_rings"]
+_STUB_CONVERSATION_RESULTS = ["anomaly_red", "count_rings", "inspect_barrels"]
 
 _RESULT_TO_ACTIVE_FLAG = {
     "anomaly_red":     bb.ANOMALY_RED_ACTIVE,
@@ -284,11 +288,11 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
         queue = self.bb.get(bb.PENDING_PEOPLE)
         assert queue, "ClassifyPersonCall: PENDING_PEOPLE empty"
         person: Person = queue[0]
+        assert self._future is not None, f"{self.qualified_name}: update called before initialise set _future"
 
-        if self._future is None:
-            return py_trees.common.Status.FAILURE
-
+        # Check if classify_face returned yet
         if not self._future.done():
+            # hasnt returned yet - check for timeout
             now = self.node.get_clock().now().nanoseconds * 1e-9
             elapsed = now - self._start_time
             if elapsed < SERVICE_TIMEOUT_SEC:
@@ -335,7 +339,12 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
 
 
 class ConversePerson(py_trees.behaviour.Behaviour):
-    """[stub] Pretend the i-th conversation requests the i-th task in the constant list."""
+    """Call /converse_person to get the task this person requests.
+
+    When `_USE_CONVERSATION_PERSON` is False, falls back to a stub that returns
+    the i-th entry of `_STUB_CONVERSATION_RESULTS` based on how many people
+    have been handled so far.
+    """
 
     def __init__(self, name: str = "ConversePerson"):
         super().__init__(name=name)
@@ -344,32 +353,88 @@ class ConversePerson(py_trees.behaviour.Behaviour):
         self.bb.register_key(key=bb.HANDLED_PEOPLE, access=py_trees.common.Access.READ)
         self.bb.register_key(key=bb.CONVERSATION_RESULT, access=py_trees.common.Access.WRITE)
 
+        self._future: Future | None = None
+
     def setup(self, **kwargs):
-        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+        self.node: Node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self.node.get_logger()
+        if _USE_CONVERSATION_PERSON:
+            self.client = self.node.create_client(ConversePersonSrv, "converse_person")
+
+    def initialise(self):
+        self._future = None
+        if not _USE_CONVERSATION_PERSON:
+            return
+        queue = self.bb.get(bb.PENDING_PEOPLE)
+        assert queue, f"{self.qualified_name}: initialise called with empty PENDING_PEOPLE"
+        person: Person = queue[0]
+        req = ConversePersonSrv.Request()
+        req.gender = person.gender.value if person.gender else ""
+        self._ros_logger.info(
+            f"{self.name}: calling /converse_person for person "
+            f"{person.face_id} (gender='{req.gender}')"
+        )
+        self._future = self.client.call_async(req)
 
     def update(self) -> py_trees.common.Status:
-        handled = self.bb.get(bb.HANDLED_PEOPLE)
-        
-        # Set conversation result to blackboard
-        idx = len(handled)
-        if idx < len(_STUB_CONVERSATION_RESULTS):
-            result = _STUB_CONVERSATION_RESULTS[idx]
-        else:
-            result = ""
-        self.bb.set(bb.CONVERSATION_RESULT, result)
-
-        # Logging purpuses:
         queue = self.bb.get(bb.PENDING_PEOPLE)
+        assert queue, "ConversePerson: PENDING_PEOPLE empty"
         person: Person = queue[0]
+
+        # stub for debug: return predetermined results based on how many people we've handled so far
+        if not _USE_CONVERSATION_PERSON:
+            handled = self.bb.get(bb.HANDLED_PEOPLE)
+            idx = len(handled)
+            if idx < len(_STUB_CONVERSATION_RESULTS):
+                result = _STUB_CONVERSATION_RESULTS[idx]
+            else:
+                result = ""
+            self.bb.set(bb.CONVERSATION_RESULT, result)
+            self._ros_logger.info(
+                f"[stub] ConversePerson with {person.name or person.face_id} -> '{result}' "
+                f"(handled_so_far={idx})"
+            )
+            self._ros_logger.debug(
+                f"{self.name}: CONVERSATION_RESULT='{result}' "
+                f"person.face_id={person.face_id} role={person.role}"
+            )
+            return py_trees.common.Status.SUCCESS
+
+        assert self._future is not None, f"{self.qualified_name}: update called before initialise set _future"
+
+        # Check if converse_person returned yet
+        if not self._future.done():
+            log_throttled(
+                self._ros_logger, self.node, f"{self.name}.waiting", "debug",
+                f"{self.name}: waiting for converse_person; person={person.face_id})",
+            )
+            return py_trees.common.Status.RUNNING
+
+        # returned - check if succeeded
+        resp: ConversePersonSrv.Response = self._future.result()  # type: ignore
+        if resp is None:
+            # no response at all (e.g. service call failed)
+            self._ros_logger.warning(
+                f"converse_person returned no response for person {person.face_id}"
+            )
+            return py_trees.common.Status.FAILURE
+
+        # retrieve result and succeed
+        result = resp.task
+        self.bb.set(bb.CONVERSATION_RESULT, result)
         self._ros_logger.info(
-            f"[stub] ConversePerson with {person.name or person.face_id} -> '{result}' "
-            f"(handled_so_far={idx})"
-        )
-        self._ros_logger.debug(
-            f"{self.name}: CONVERSATION_RESULT='{result}' "
-            f"person.face_id={person.face_id} role={person.role}"
+            f"converse_person({person.name or person.face_id}) -> '{result}'"
         )
         return py_trees.common.Status.SUCCESS
+
+    def terminate(self, new_status):
+        if (
+            new_status == py_trees.common.Status.INVALID
+            and self._future is not None
+            and not self._future.done()
+        ):
+            self._future.cancel()
+        self._future = None
 
 
 class MarkPersonHandled(py_trees.behaviour.Behaviour):

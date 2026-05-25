@@ -52,6 +52,12 @@ def generate_launch_description():
             output='screen',
         ),
         Node(
+            package='task2',
+            executable='conversation',
+            name='conversation',
+            output='screen',
+        ),
+        Node(
             package='dis_tutorial7',
             executable='arm_mover_actions.py',
             name='arm_mover_actions',
