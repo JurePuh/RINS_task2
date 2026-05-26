@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -62,9 +63,32 @@ struct Candidate
   Eigen::Vector3f axis_map{Eigen::Vector3f::UnitZ()};
   float normal_x{0.0F};
   float normal_y{0.0F};
+  float largest_extent_m{0.0F};
+  float middle_extent_m{0.0F};
+  float thickness_m{0.0F};
   bool horizontal{false};
   int inliers{0};
   float residual{0.0F};
+};
+
+struct DebugRegion
+{
+  std::string color;
+  std::string reason;
+  cv::Rect bbox;
+  std::vector<cv::Point> contour;
+  int sample_count{0};
+  float metric{std::numeric_limits<float>::quiet_NaN()};
+};
+
+struct DebugAlignment
+{
+  std::string color;
+  cv::Rect bbox;
+  std::vector<cv::Point> contour;
+  int best_dx{0};
+  int best_dy{0};
+  int best_count{0};
 };
 
 struct BarrelTrack
@@ -161,6 +185,12 @@ public:
     barrel_pub_ = create_publisher<msg_types::msg::BarrelDetect>(barrel_topic_, 10);
     marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, 10);
     debug_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_overlay_topic_, 10);
+    debug_mask_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_mask_topic_, 10);
+    debug_rejection_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_rejection_topic_, 10);
+    debug_depth_alignment_pub_ =
+      create_publisher<sensor_msgs::msg::Image>(debug_depth_alignment_topic_, 10);
+    debug_depth_validity_pub_ =
+      create_publisher<sensor_msgs::msg::Image>(debug_depth_validity_topic_, 10);
 
     image_sub_.subscribe(this, image_topic_, rmw_qos_profile_sensor_data);
     cloud_sub_.subscribe(this, point_cloud_topic_, rmw_qos_profile_sensor_data);
@@ -192,6 +222,10 @@ private:
     declare_parameter("barrel_topic", "/barrel_detect");
     declare_parameter("marker_topic", "/barrel_markers");
     declare_parameter("debug_overlay_topic", "/barrel/debug_overlay");
+    declare_parameter("debug_mask_topic", "/barrel/debug_mask");
+    declare_parameter("debug_rejection_topic", "/barrel/debug_rejections");
+    declare_parameter("debug_depth_alignment_topic", "/barrel/debug_depth_alignment");
+    declare_parameter("debug_depth_validity_topic", "/barrel/debug_depth_validity");
     declare_parameter("publish_hz", 2.0);
     declare_parameter("sync_queue_size", 5);
     declare_parameter("sync_slop_s", 0.08);
@@ -206,6 +240,13 @@ private:
     declare_parameter("cluster_tolerance_m", 0.07);
     declare_parameter("cluster_min_points", 40);
     declare_parameter("cluster_max_points", 20000);
+    declare_parameter("candidate_min_3d_largest_extent_m", 0.0);
+    declare_parameter("candidate_max_3d_largest_extent_m", 0.0);
+    declare_parameter("candidate_min_3d_middle_extent_m", 0.0);
+    declare_parameter("candidate_min_3d_depth_extent_m", 0.0);
+    declare_parameter("candidate_min_3d_depth_to_middle_ratio", 0.0);
+    declare_parameter("candidate_min_3d_middle_largest_ratio", 0.0);
+    declare_parameter("candidate_max_3d_middle_largest_ratio", 0.0);
     declare_parameter("normal_search_radius_m", 0.05);
     declare_parameter("ransac_max_iterations", 250);
     declare_parameter("ransac_distance_threshold_m", 0.035);
@@ -214,7 +255,8 @@ private:
     declare_parameter("cylinder_radius_max_m", 0.45);
     declare_parameter("cylinder_inlier_min", 35);
     declare_parameter("cylinder_fit_residual_max_m", 0.05);
-    declare_parameter("horizontal_dot_threshold", 0.55);
+    declare_parameter("vertical_dot_threshold", 0.75);
+    declare_parameter("horizontal_dot_threshold", 0.35);
     declare_parameter("use_color_prefilter", true);
     declare_parameter("candidate_min_area_px", 180.0);
     declare_parameter("candidate_max_area_px", 90000.0);
@@ -234,7 +276,18 @@ private:
     declare_parameter("marker_lifetime_s", 1.5);
     declare_parameter("marker_namespace", "barrels");
     declare_parameter("enable_debug_overlay", true);
+    declare_parameter("enable_debug_mask", true);
+    declare_parameter("enable_debug_rejections", true);
+    declare_parameter("enable_debug_rejection_log", true);
+    declare_parameter("enable_debug_depth_alignment", true);
+    declare_parameter("enable_debug_depth_validity", true);
+    declare_parameter("debug_depth_alignment_search_px", 50);
+    declare_parameter("debug_depth_alignment_step_px", 5);
     declare_parameter("debug_window_name", "barrel");
+    declare_parameter("debug_mask_window_name", "barrel_mask");
+    declare_parameter("debug_rejection_window_name", "barrel_rejections");
+    declare_parameter("debug_depth_alignment_window_name", "barrel_depth_alignment");
+    declare_parameter("debug_depth_validity_window_name", "barrel_depth_validity");
     declare_parameter("show_debug_window", false);
     declare_parameter("draw_barrel_outline", true);
     declare_parameter("draw_blob_metrics", true);
@@ -258,6 +311,10 @@ private:
     barrel_topic_ = get_parameter("barrel_topic").as_string();
     marker_topic_ = get_parameter("marker_topic").as_string();
     debug_overlay_topic_ = get_parameter("debug_overlay_topic").as_string();
+    debug_mask_topic_ = get_parameter("debug_mask_topic").as_string();
+    debug_rejection_topic_ = get_parameter("debug_rejection_topic").as_string();
+    debug_depth_alignment_topic_ = get_parameter("debug_depth_alignment_topic").as_string();
+    debug_depth_validity_topic_ = get_parameter("debug_depth_validity_topic").as_string();
     publish_hz_ = get_parameter("publish_hz").as_double();
     sync_queue_size_ = static_cast<uint32_t>(get_parameter("sync_queue_size").as_int());
     sync_slop_s_ = get_parameter("sync_slop_s").as_double();
@@ -272,6 +329,16 @@ private:
     cluster_tolerance_m_ = get_parameter("cluster_tolerance_m").as_double();
     cluster_min_points_ = static_cast<int>(get_parameter("cluster_min_points").as_int());
     cluster_max_points_ = static_cast<int>(get_parameter("cluster_max_points").as_int());
+    candidate_min_3d_largest_extent_m_ = get_parameter("candidate_min_3d_largest_extent_m").as_double();
+    candidate_max_3d_largest_extent_m_ = get_parameter("candidate_max_3d_largest_extent_m").as_double();
+    candidate_min_3d_middle_extent_m_ = get_parameter("candidate_min_3d_middle_extent_m").as_double();
+    candidate_min_3d_depth_extent_m_ = get_parameter("candidate_min_3d_depth_extent_m").as_double();
+    candidate_min_3d_depth_to_middle_ratio_ =
+      get_parameter("candidate_min_3d_depth_to_middle_ratio").as_double();
+    candidate_min_3d_middle_largest_ratio_ =
+      get_parameter("candidate_min_3d_middle_largest_ratio").as_double();
+    candidate_max_3d_middle_largest_ratio_ =
+      get_parameter("candidate_max_3d_middle_largest_ratio").as_double();
     normal_search_radius_m_ = get_parameter("normal_search_radius_m").as_double();
     ransac_max_iterations_ = static_cast<int>(get_parameter("ransac_max_iterations").as_int());
     ransac_distance_threshold_m_ = get_parameter("ransac_distance_threshold_m").as_double();
@@ -280,6 +347,7 @@ private:
     cylinder_radius_max_m_ = get_parameter("cylinder_radius_max_m").as_double();
     cylinder_inlier_min_ = static_cast<int>(get_parameter("cylinder_inlier_min").as_int());
     cylinder_fit_residual_max_m_ = get_parameter("cylinder_fit_residual_max_m").as_double();
+    vertical_dot_threshold_ = get_parameter("vertical_dot_threshold").as_double();
     horizontal_dot_threshold_ = get_parameter("horizontal_dot_threshold").as_double();
     candidate_min_area_px_ = get_parameter("candidate_min_area_px").as_double();
     candidate_max_area_px_ = get_parameter("candidate_max_area_px").as_double();
@@ -297,7 +365,22 @@ private:
     marker_lifetime_s_ = get_parameter("marker_lifetime_s").as_double();
     marker_namespace_ = get_parameter("marker_namespace").as_string();
     enable_debug_overlay_ = get_parameter("enable_debug_overlay").as_bool();
+    enable_debug_mask_ = get_parameter("enable_debug_mask").as_bool();
+    enable_debug_rejections_ = get_parameter("enable_debug_rejections").as_bool();
+    enable_debug_rejection_log_ = get_parameter("enable_debug_rejection_log").as_bool();
+    enable_debug_depth_alignment_ = get_parameter("enable_debug_depth_alignment").as_bool();
+    enable_debug_depth_validity_ = get_parameter("enable_debug_depth_validity").as_bool();
+    debug_depth_alignment_search_px_ =
+      static_cast<int>(get_parameter("debug_depth_alignment_search_px").as_int());
+    debug_depth_alignment_step_px_ =
+      std::max(1, static_cast<int>(get_parameter("debug_depth_alignment_step_px").as_int()));
     debug_window_name_ = get_parameter("debug_window_name").as_string();
+    debug_mask_window_name_ = get_parameter("debug_mask_window_name").as_string();
+    debug_rejection_window_name_ = get_parameter("debug_rejection_window_name").as_string();
+    debug_depth_alignment_window_name_ =
+      get_parameter("debug_depth_alignment_window_name").as_string();
+    debug_depth_validity_window_name_ =
+      get_parameter("debug_depth_validity_window_name").as_string();
     show_debug_window_ = get_parameter("show_debug_window").as_bool();
     draw_barrel_outline_ = get_parameter("draw_barrel_outline").as_bool();
     draw_blob_metrics_ = get_parameter("draw_blob_metrics").as_bool();
@@ -348,39 +431,80 @@ private:
 
     cv::Mat hsv;
     cv::cvtColor(cv_ptr->image, hsv, cv::COLOR_BGR2HSV);
-    auto candidates = detect_candidates(hsv, organized, cloud_msg->header);
+    cv::Mat debug_mask;
+    std::vector<DebugRegion> debug_regions;
+    std::vector<DebugAlignment> debug_alignments;
+    auto candidates = detect_candidates(
+      hsv, organized, cloud_msg->header, &debug_mask, &debug_regions, &debug_alignments);
     update_tracks(candidates);
 
+    if (enable_debug_mask_) {
+      publish_mask(debug_mask, image_msg->header);
+    }
+    if (enable_debug_depth_validity_) {
+      publish_depth_validity(cv_ptr->image, debug_mask, organized, image_msg->header);
+    }
     if (enable_debug_overlay_) {
       publish_overlay(cv_ptr->image, candidates, image_msg->header);
+    }
+    if (enable_debug_rejections_) {
+      publish_rejections(cv_ptr->image, debug_regions, image_msg->header);
+    }
+    if (enable_debug_depth_alignment_) {
+      publish_depth_alignment(cv_ptr->image, debug_alignments, image_msg->header);
+    }
+    if (enable_debug_rejection_log_) {
+      log_rejection_summary(candidates, debug_regions);
     }
   }
 
   std::vector<Candidate> detect_candidates(
     const cv::Mat & hsv,
     const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
-    const std_msgs::msg::Header & header)
+    const std_msgs::msg::Header & header,
+    cv::Mat * debug_mask,
+    std::vector<DebugRegion> * debug_regions,
+    std::vector<DebugAlignment> * debug_alignments)
   {
     std::vector<Candidate> candidates;
+    if (debug_mask != nullptr) {
+      *debug_mask = cv::Mat::zeros(hsv.size(), CV_8UC1);
+    }
     for (const auto & [color, ranges] : hsv_ranges_) {
       cv::Mat mask = build_mask(hsv, ranges);
+      if (debug_mask != nullptr) {
+        cv::bitwise_or(*debug_mask, mask, *debug_mask);
+      }
       std::vector<std::vector<cv::Point>> contours;
       cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
       for (const auto & contour : contours) {
         const double area = cv::contourArea(contour);
+        const cv::Rect bbox = cv::boundingRect(contour);
         if (area < candidate_min_area_px_ || area > candidate_max_area_px_) {
+          add_debug_region(color, "area", contour, bbox, debug_regions, 0, static_cast<float>(area));
           continue;
         }
-        const cv::Rect bbox = cv::boundingRect(contour);
         if (bbox.width < candidate_min_width_px_ || bbox.height < candidate_min_height_px_) {
+          add_debug_region(color, "bbox", contour, bbox, debug_regions);
           continue;
         }
         const float confidence = static_cast<float>(area / std::max(1, bbox.area()));
         if (confidence < color_confidence_min_) {
+          add_debug_region(color, "fill", contour, bbox, debug_regions, 0, confidence);
           continue;
         }
 
-        auto cluster_clouds = clusters_from_contour(contour, bbox, organized);
+        int finite_depth_points = 0;
+        auto cluster_clouds = clusters_from_contour(contour, bbox, organized, &finite_depth_points);
+        if (cluster_clouds.empty()) {
+          const std::string reason = finite_depth_points < cluster_min_points_ ? "depth" : "cluster";
+          add_debug_region(
+            color, reason, contour, bbox, debug_regions, finite_depth_points,
+            static_cast<float>(finite_depth_points));
+          if (finite_depth_points == 0 && debug_alignments != nullptr) {
+            debug_alignments->push_back(find_best_depth_alignment(color, contour, bbox, organized));
+          }
+        }
         for (const auto & cluster : cluster_clouds) {
           Candidate candidate;
           candidate.color = color;
@@ -388,13 +512,26 @@ private:
           candidate.bbox = bbox;
           candidate.center_px = {(bbox.x + bbox.width / 2), (bbox.y + bbox.height / 2)};
           candidate.contour = contour;
-          if (!fit_cylinder(cluster, candidate)) {
+          std::string extent_reason;
+          float extent_metric = std::numeric_limits<float>::quiet_NaN();
+          if (!passes_candidate_extent_gate(cluster, &candidate, &extent_reason, &extent_metric)) {
+            add_debug_region(color, extent_reason, contour, bbox, debug_regions, 0, extent_metric);
             continue;
           }
-          if (!transform_candidate(header, candidate)) {
+          std::string fit_reason;
+          float fit_metric = std::numeric_limits<float>::quiet_NaN();
+          if (!fit_cylinder(cluster, candidate, &fit_reason, &fit_metric)) {
+            add_debug_region(color, fit_reason, contour, bbox, debug_regions, 0, fit_metric);
+            continue;
+          }
+          std::string transform_reason;
+          float transform_metric = std::numeric_limits<float>::quiet_NaN();
+          if (!transform_candidate(header, candidate, &transform_reason, &transform_metric)) {
+            add_debug_region(color, transform_reason, contour, bbox, debug_regions, 0, transform_metric);
             continue;
           }
           if (!passes_height_gate(candidate)) {
+            add_debug_region(color, "height", contour, bbox, debug_regions, 0, candidate.centroid_map.z());
             continue;
           }
           candidates.push_back(candidate);
@@ -402,6 +539,177 @@ private:
       }
     }
     return candidates;
+  }
+
+  static void add_debug_region(
+    const std::string & color,
+    const std::string & reason,
+    const std::vector<cv::Point> & contour,
+    const cv::Rect & bbox,
+    std::vector<DebugRegion> * debug_regions,
+    int sample_count = 0,
+    float metric = std::numeric_limits<float>::quiet_NaN())
+  {
+    if (debug_regions == nullptr) {
+      return;
+    }
+    DebugRegion region;
+    region.color = color;
+    region.reason = reason.empty() ? "reject" : reason;
+    region.bbox = bbox;
+    region.contour = contour;
+    region.sample_count = sample_count;
+    region.metric = metric;
+    debug_regions->push_back(region);
+  }
+
+  DebugAlignment find_best_depth_alignment(
+    const std::string & color,
+    const std::vector<cv::Point> & contour,
+    const cv::Rect & bbox,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized) const
+  {
+    DebugAlignment alignment;
+    alignment.color = color;
+    alignment.bbox = bbox;
+    alignment.contour = contour;
+
+    const int search_px = std::max(0, debug_depth_alignment_search_px_);
+    const int step_px = std::max(1, debug_depth_alignment_step_px_);
+    for (int dy = -search_px; dy <= search_px; dy += step_px) {
+      for (int dx = -search_px; dx <= search_px; dx += step_px) {
+        const int count = count_finite_depth_points(contour, bbox, organized, dx, dy);
+        if (count > alignment.best_count) {
+          alignment.best_count = count;
+          alignment.best_dx = dx;
+          alignment.best_dy = dy;
+        }
+      }
+    }
+    return alignment;
+  }
+
+  int count_finite_depth_points(
+    const std::vector<cv::Point> & contour,
+    const cv::Rect & bbox,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
+    int dx,
+    int dy) const
+  {
+    cv::Mat contour_mask = cv::Mat::zeros(
+      static_cast<int>(organized->height), static_cast<int>(organized->width), CV_8UC1);
+    std::vector<std::vector<cv::Point>> contours{contour};
+    cv::drawContours(contour_mask, contours, 0, cv::Scalar(255), cv::FILLED);
+
+    int count = 0;
+    const int x_end = std::min(bbox.x + bbox.width, static_cast<int>(organized->width));
+    const int y_end = std::min(bbox.y + bbox.height, static_cast<int>(organized->height));
+    for (int y = std::max(0, bbox.y); y < y_end; ++y) {
+      for (int x = std::max(0, bbox.x); x < x_end; ++x) {
+        if (contour_mask.at<uint8_t>(y, x) == 0) {
+          continue;
+        }
+        const int sample_x = x + dx;
+        const int sample_y = y + dy;
+        if (sample_x < 0 || sample_y < 0 ||
+          sample_x >= static_cast<int>(organized->width) ||
+          sample_y >= static_cast<int>(organized->height))
+        {
+          continue;
+        }
+        const auto & point = organized->at(sample_x, sample_y);
+        if (pcl::isFinite(point) && point.z >= depth_min_m_ && point.z <= depth_max_m_) {
+          ++count;
+        }
+      }
+    }
+    return count;
+  }
+
+  bool passes_candidate_extent_gate(
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,
+    Candidate * candidate,
+    std::string * reject_reason,
+    float * reject_metric) const
+  {
+    if (cloud->empty()) {
+      set_reject(reject_reason, reject_metric, "extent", 0.0F);
+      return false;
+    }
+
+    pcl::PointXYZRGB min_pt;
+    pcl::PointXYZRGB max_pt;
+    pcl::getMinMax3D(*cloud, min_pt, max_pt);
+    std::array<float, 3> extents{
+      std::abs(max_pt.x - min_pt.x),
+      std::abs(max_pt.y - min_pt.y),
+      std::abs(max_pt.z - min_pt.z)};
+    std::sort(extents.begin(), extents.end());
+
+    const float thickness = extents[0];
+    const float middle = extents[1];
+    const float largest = extents[2];
+    if (candidate != nullptr) {
+      candidate->largest_extent_m = largest;
+      candidate->middle_extent_m = middle;
+      candidate->thickness_m = thickness;
+    }
+
+    if (candidate_min_3d_largest_extent_m_ > 0.0 && largest < candidate_min_3d_largest_extent_m_) {
+      set_reject(reject_reason, reject_metric, "extent", largest);
+      return false;
+    }
+    if (candidate_max_3d_largest_extent_m_ > 0.0 && largest > candidate_max_3d_largest_extent_m_) {
+      set_reject(reject_reason, reject_metric, "oversize", largest);
+      return false;
+    }
+    if (candidate_min_3d_middle_extent_m_ > 0.0 && middle < candidate_min_3d_middle_extent_m_) {
+      set_reject(reject_reason, reject_metric, "width", middle);
+      return false;
+    }
+    if (candidate_min_3d_depth_extent_m_ > 0.0 && thickness < candidate_min_3d_depth_extent_m_) {
+      set_reject(reject_reason, reject_metric, "thickness", thickness);
+      return false;
+    }
+
+    if (candidate_min_3d_depth_to_middle_ratio_ > 0.0 && middle > 1e-4F) {
+      const float ratio = thickness / middle;
+      if (ratio < candidate_min_3d_depth_to_middle_ratio_) {
+        set_reject(reject_reason, reject_metric, "flatness", ratio);
+        return false;
+      }
+    }
+    if (middle > 1e-4F && largest > 1e-4F) {
+      const float ratio = middle / largest;
+      if (candidate_min_3d_middle_largest_ratio_ > 0.0 &&
+        ratio < candidate_min_3d_middle_largest_ratio_)
+      {
+        set_reject(reject_reason, reject_metric, "aspect", ratio);
+        return false;
+      }
+      if (candidate_max_3d_middle_largest_ratio_ > 0.0 &&
+        ratio > candidate_max_3d_middle_largest_ratio_)
+      {
+        set_reject(reject_reason, reject_metric, "aspect", ratio);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  static void set_reject(
+    std::string * reject_reason,
+    float * reject_metric,
+    const std::string & reason,
+    float metric)
+  {
+    if (reject_reason != nullptr) {
+      *reject_reason = reason;
+    }
+    if (reject_metric != nullptr) {
+      *reject_metric = metric;
+    }
   }
 
   cv::Mat build_mask(const cv::Mat & hsv, const std::vector<HsvRange> & ranges)
@@ -428,7 +736,8 @@ private:
   std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clusters_from_contour(
     const std::vector<cv::Point> & contour,
     const cv::Rect & bbox,
-    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized)
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
+    int * finite_depth_points = nullptr)
   {
     cv::Mat contour_mask = cv::Mat::zeros(static_cast<int>(organized->height), static_cast<int>(organized->width), CV_8UC1);
     std::vector<std::vector<cv::Point>> contours{contour};
@@ -448,6 +757,9 @@ private:
         }
         cloud->push_back(point);
       }
+    }
+    if (finite_depth_points != nullptr) {
+      *finite_depth_points = static_cast<int>(cloud->size());
     }
     if (static_cast<int>(cloud->size()) < cluster_min_points_) {
       return {};
@@ -476,9 +788,19 @@ private:
     return clusters;
   }
 
-  bool fit_cylinder(const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud, Candidate & candidate)
+  bool fit_cylinder(
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,
+    Candidate & candidate,
+    std::string * reject_reason = nullptr,
+    float * reject_metric = nullptr)
   {
     if (static_cast<int>(cloud->size()) < cylinder_inlier_min_) {
+      if (reject_reason != nullptr) {
+        *reject_reason = "points";
+      }
+      if (reject_metric != nullptr) {
+        *reject_metric = static_cast<float>(cloud->size());
+      }
       return false;
     }
 
@@ -505,12 +827,21 @@ private:
     seg.segment(*inliers, *coeff);
 
     if (static_cast<int>(inliers->indices.size()) < cylinder_inlier_min_ || coeff->values.size() < 7) {
+      if (reject_reason != nullptr) {
+        *reject_reason = "ransac";
+      }
+      if (reject_metric != nullptr) {
+        *reject_metric = static_cast<float>(inliers->indices.size());
+      }
       return false;
     }
 
     const Eigen::Vector3f axis_point(coeff->values[0], coeff->values[1], coeff->values[2]);
     Eigen::Vector3f axis(coeff->values[3], coeff->values[4], coeff->values[5]);
     if (axis.norm() < 1e-4F) {
+      if (reject_reason != nullptr) {
+        *reject_reason = "axis";
+      }
       return false;
     }
     axis.normalize();
@@ -528,13 +859,18 @@ private:
     }
     const float residual = residual_sum / static_cast<float>(inliers->indices.size());
     if (residual > cylinder_fit_residual_max_m_) {
+      if (reject_reason != nullptr) {
+        *reject_reason = "residual";
+      }
+      if (reject_metric != nullptr) {
+        *reject_metric = residual;
+      }
       return false;
     }
 
     centroid /= static_cast<float>(inliers->indices.size());
     candidate.centroid_camera = centroid;
     candidate.axis = axis;
-    candidate.horizontal = std::abs(axis.z()) < horizontal_dot_threshold_;
     candidate.inliers = static_cast<int>(inliers->indices.size());
     candidate.residual = residual;
     return true;
@@ -542,14 +878,14 @@ private:
 
   bool transform_candidate(
     const std_msgs::msg::Header & source_header,
-    Candidate & candidate)
+    Candidate & candidate,
+    std::string * reject_reason = nullptr,
+    float * reject_metric = nullptr)
   {
     if (target_frame_ == source_header.frame_id || target_frame_.empty()) {
       candidate.centroid_map = candidate.centroid_camera;
       candidate.axis_map = candidate.axis;
-      candidate.horizontal = std::abs(candidate.axis_map.z()) < horizontal_dot_threshold_;
-      set_candidate_normal(candidate);
-      return true;
+      return apply_orientation_gate(candidate, reject_reason, reject_metric);
     }
 
     try {
@@ -584,13 +920,65 @@ private:
       } else {
         candidate.axis_map = candidate.axis;
       }
-      candidate.horizontal = std::abs(candidate.axis_map.z()) < horizontal_dot_threshold_;
-      set_candidate_normal(candidate);
-      return true;
+      return apply_orientation_gate(candidate, reject_reason, reject_metric);
     } catch (const tf2::TransformException & ex) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "TF lookup failed: %s", ex.what());
+      if (reject_reason != nullptr) {
+        *reject_reason = "tf";
+      }
       return false;
     }
+  }
+
+  bool apply_orientation_gate(
+    Candidate & candidate,
+    std::string * reject_reason = nullptr,
+    float * reject_metric = nullptr) const
+  {
+    if (!std::isfinite(candidate.axis_map.x()) ||
+      !std::isfinite(candidate.axis_map.y()) ||
+      !std::isfinite(candidate.axis_map.z()))
+    {
+      if (reject_reason != nullptr) {
+        *reject_reason = "orientation";
+      }
+      return false;
+    }
+
+    if (candidate.axis_map.norm() < 1e-4F) {
+      if (reject_reason != nullptr) {
+        *reject_reason = "orientation";
+      }
+      return false;
+    }
+    candidate.axis_map.normalize();
+
+    const float vertical_dot = std::abs(candidate.axis_map.z());
+    if (vertical_dot <= horizontal_dot_threshold_) {
+      candidate.horizontal = true;
+      set_candidate_normal(candidate);
+      return true;
+    }
+    if (vertical_dot >= vertical_dot_threshold_) {
+      candidate.horizontal = false;
+      set_candidate_normal(candidate);
+      return true;
+    }
+
+    RCLCPP_DEBUG(
+      get_logger(),
+      "Rejected %s barrel candidate by orientation: |axis.z|=%.3f, horizontal<=%.3f, vertical>=%.3f",
+      candidate.color.c_str(),
+      vertical_dot,
+      horizontal_dot_threshold_,
+      vertical_dot_threshold_);
+    if (reject_reason != nullptr) {
+      *reject_reason = "orientation";
+    }
+    if (reject_metric != nullptr) {
+      *reject_metric = vertical_dot;
+    }
+    return false;
   }
 
   static void set_candidate_normal(Candidate & candidate)
@@ -793,6 +1181,171 @@ private:
     marker_pub_->publish(markers);
   }
 
+  void publish_mask(const cv::Mat & mask, const std_msgs::msg::Header & header)
+  {
+    if (mask.empty()) {
+      return;
+    }
+
+    auto out = cv_bridge::CvImage(header, "mono8", mask).toImageMsg();
+    debug_mask_pub_->publish(*out);
+
+    if (show_debug_window_) {
+      cv::imshow(debug_mask_window_name_, mask);
+      cv::waitKey(1);
+    }
+  }
+
+  void log_rejection_summary(
+    const std::vector<Candidate> & candidates,
+    const std::vector<DebugRegion> & debug_regions)
+  {
+    std::unordered_map<std::string, int> counts;
+    for (const auto & region : debug_regions) {
+      counts[region.reason] += 1;
+    }
+
+    std::string summary = "barrel debug: accepted_candidates=" + std::to_string(candidates.size());
+    for (const auto & [reason, count] : counts) {
+      summary += " " + reason + "=" + std::to_string(count);
+    }
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000, "%s", summary.c_str());
+  }
+
+  void publish_rejections(
+    const cv::Mat & image,
+    const std::vector<DebugRegion> & debug_regions,
+    const std_msgs::msg::Header & header)
+  {
+    cv::Mat overlay = image.clone();
+    for (const auto & region : debug_regions) {
+      const auto color = draw_color(region.color);
+      if (draw_barrel_outline_) {
+        std::vector<std::vector<cv::Point>> contours{region.contour};
+        cv::drawContours(overlay, contours, 0, color, 1);
+        cv::rectangle(overlay, region.bbox, color, 1);
+      }
+
+      std::string label = region.color + " reject:" + region.reason;
+      if ((region.reason == "depth" || region.reason == "cluster" ||
+        region.reason == "points" || region.reason == "ransac") && std::isfinite(region.metric))
+      {
+        label += " n=" + std::to_string(static_cast<int>(region.metric));
+      } else if (
+        (region.reason == "area" || region.reason == "fill" || region.reason == "height" ||
+        region.reason == "orientation" || region.reason == "residual" ||
+        region.reason == "extent" || region.reason == "oversize" ||
+        region.reason == "width" || region.reason == "thickness" ||
+        region.reason == "flatness" || region.reason == "aspect") && std::isfinite(region.metric))
+      {
+        label += " " + std::to_string(region.metric).substr(0, 5);
+      }
+
+      cv::putText(
+        overlay, label, {region.bbox.x, std::max(15, region.bbox.y - 6)},
+        cv::FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv::LINE_AA);
+    }
+
+    auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
+    debug_rejection_pub_->publish(*out);
+
+    if (show_debug_window_) {
+      cv::imshow(debug_rejection_window_name_, overlay);
+      cv::waitKey(1);
+    }
+  }
+
+  void publish_depth_alignment(
+    const cv::Mat & image,
+    const std::vector<DebugAlignment> & debug_alignments,
+    const std_msgs::msg::Header & header)
+  {
+    cv::Mat overlay = image.clone();
+    for (const auto & alignment : debug_alignments) {
+      const auto color = draw_color(alignment.color);
+      std::vector<std::vector<cv::Point>> contours{alignment.contour};
+      cv::drawContours(overlay, contours, 0, color, 1);
+      cv::rectangle(overlay, alignment.bbox, color, 1);
+
+      cv::Rect shifted = alignment.bbox;
+      shifted.x += alignment.best_dx;
+      shifted.y += alignment.best_dy;
+      shifted &= cv::Rect(0, 0, image.cols, image.rows);
+      if (shifted.area() > 0) {
+        cv::rectangle(overlay, shifted, {255, 255, 0}, 2);
+        cv::arrowedLine(
+          overlay,
+          {alignment.bbox.x + alignment.bbox.width / 2, alignment.bbox.y + alignment.bbox.height / 2},
+          {shifted.x + shifted.width / 2, shifted.y + shifted.height / 2},
+          {255, 255, 0}, 2, cv::LINE_AA, 0, 0.25);
+      }
+
+      const std::string label =
+        alignment.color + " depth align dx=" + std::to_string(alignment.best_dx) +
+        " dy=" + std::to_string(alignment.best_dy) +
+        " n=" + std::to_string(alignment.best_count);
+      cv::putText(
+        overlay, label, {alignment.bbox.x, std::max(15, alignment.bbox.y - 22)},
+        cv::FONT_HERSHEY_SIMPLEX, 0.42, {255, 255, 0}, 1, cv::LINE_AA);
+    }
+
+    auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
+    debug_depth_alignment_pub_->publish(*out);
+
+    if (show_debug_window_) {
+      cv::imshow(debug_depth_alignment_window_name_, overlay);
+      cv::waitKey(1);
+    }
+  }
+
+  void publish_depth_validity(
+    const cv::Mat & image,
+    const cv::Mat & mask,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
+    const std_msgs::msg::Header & header)
+  {
+    cv::Mat overlay = image.clone();
+    for (int y = 0; y < image.rows; ++y) {
+      for (int x = 0; x < image.cols; ++x) {
+        const auto & point = organized->at(x, y);
+        const bool valid_depth =
+          pcl::isFinite(point) && point.z >= depth_min_m_ && point.z <= depth_max_m_;
+        const bool masked = !mask.empty() && mask.at<uint8_t>(y, x) != 0;
+
+        if (masked && valid_depth) {
+          overlay.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 255);
+        } else if (masked) {
+          overlay.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);
+        } else if (valid_depth) {
+          const cv::Vec3b original = overlay.at<cv::Vec3b>(y, x);
+          overlay.at<cv::Vec3b>(y, x) = cv::Vec3b(
+            static_cast<uint8_t>(original[0] * 0.35),
+            static_cast<uint8_t>(std::min(255.0, original[1] * 0.35 + 160.0)),
+            static_cast<uint8_t>(original[2] * 0.35));
+        } else {
+          const cv::Vec3b original = overlay.at<cv::Vec3b>(y, x);
+          overlay.at<cv::Vec3b>(y, x) = cv::Vec3b(
+            static_cast<uint8_t>(original[0] * 0.25),
+            static_cast<uint8_t>(original[1] * 0.25),
+            static_cast<uint8_t>(original[2] * 0.25));
+        }
+      }
+    }
+
+    cv::putText(
+      overlay,
+      "green=valid depth  yellow=mask+depth  red=mask no depth",
+      {8, 18}, cv::FONT_HERSHEY_SIMPLEX, 0.45, {255, 255, 255}, 1, cv::LINE_AA);
+
+    auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
+    debug_depth_validity_pub_->publish(*out);
+
+    if (show_debug_window_) {
+      cv::imshow(debug_depth_validity_window_name_, overlay);
+      cv::waitKey(1);
+    }
+  }
+
   void publish_overlay(
     const cv::Mat & image,
     const std::vector<Candidate> & candidates,
@@ -834,6 +1387,8 @@ private:
       if (draw_blob_metrics_) {
         const std::string label =
           "inliers " + std::to_string(candidate.inliers) +
+          " ext " + std::to_string(candidate.largest_extent_m).substr(0, 4) +
+          " thick " + std::to_string(candidate.thickness_m).substr(0, 4) +
           " residual " + std::to_string(candidate.residual).substr(0, 4) +
           " z " + std::to_string(candidate.centroid_map.z()).substr(0, 4) +
           " normal (" + std::to_string(candidate.normal_x).substr(0, 4) +
@@ -858,6 +1413,10 @@ private:
   std::string barrel_topic_;
   std::string marker_topic_;
   std::string debug_overlay_topic_;
+  std::string debug_mask_topic_;
+  std::string debug_rejection_topic_;
+  std::string debug_depth_alignment_topic_;
+  std::string debug_depth_validity_topic_;
   double publish_hz_{2.0};
   uint32_t sync_queue_size_{5};
   double sync_slop_s_{0.08};
@@ -872,6 +1431,13 @@ private:
   double cluster_tolerance_m_{0.07};
   int cluster_min_points_{40};
   int cluster_max_points_{20000};
+  double candidate_min_3d_largest_extent_m_{0.0};
+  double candidate_max_3d_largest_extent_m_{0.0};
+  double candidate_min_3d_middle_extent_m_{0.0};
+  double candidate_min_3d_depth_extent_m_{0.0};
+  double candidate_min_3d_depth_to_middle_ratio_{0.0};
+  double candidate_min_3d_middle_largest_ratio_{0.0};
+  double candidate_max_3d_middle_largest_ratio_{0.0};
   double normal_search_radius_m_{0.05};
   int ransac_max_iterations_{250};
   double ransac_distance_threshold_m_{0.035};
@@ -880,7 +1446,8 @@ private:
   double cylinder_radius_max_m_{0.45};
   int cylinder_inlier_min_{35};
   double cylinder_fit_residual_max_m_{0.05};
-  double horizontal_dot_threshold_{0.55};
+  double vertical_dot_threshold_{0.75};
+  double horizontal_dot_threshold_{0.35};
   double candidate_min_area_px_{180.0};
   double candidate_max_area_px_{90000.0};
   int candidate_min_width_px_{12};
@@ -897,7 +1464,18 @@ private:
   double marker_lifetime_s_{1.5};
   std::string marker_namespace_{"barrels"};
   bool enable_debug_overlay_{true};
+  bool enable_debug_mask_{true};
+  bool enable_debug_rejections_{true};
+  bool enable_debug_rejection_log_{true};
+  bool enable_debug_depth_alignment_{true};
+  bool enable_debug_depth_validity_{true};
+  int debug_depth_alignment_search_px_{50};
+  int debug_depth_alignment_step_px_{5};
   std::string debug_window_name_{"barrel"};
+  std::string debug_mask_window_name_{"barrel_mask"};
+  std::string debug_rejection_window_name_{"barrel_rejections"};
+  std::string debug_depth_alignment_window_name_{"barrel_depth_alignment"};
+  std::string debug_depth_validity_window_name_{"barrel_depth_validity"};
   bool show_debug_window_{false};
   bool draw_barrel_outline_{true};
   bool draw_blob_metrics_{true};
@@ -915,6 +1493,10 @@ private:
   rclcpp::Publisher<msg_types::msg::BarrelDetect>::SharedPtr barrel_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_mask_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_rejection_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_alignment_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_validity_pub_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 };
 

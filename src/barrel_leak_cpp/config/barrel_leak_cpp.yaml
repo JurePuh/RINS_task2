@@ -7,6 +7,10 @@ detect_barrel_cpp:
     barrel_topic: /barrel_detect
     marker_topic: /barrel_markers
     debug_overlay_topic: /barrel/debug_overlay
+    debug_mask_topic: /barrel/debug_mask
+    debug_rejection_topic: /barrel/debug_rejections
+    debug_depth_alignment_topic: /barrel/debug_depth_alignment
+    debug_depth_validity_topic: /barrel/debug_depth_validity
 
     publish_hz: 2.0
     sync_queue_size: 5
@@ -18,11 +22,20 @@ detect_barrel_cpp:
     track_timeout_frames: 18
     max_barrel_height_m: 0.42
 
-    depth_min_m: 0.15
-    depth_max_m: 6.0
+    depth_min_m: -0.22
+    depth_max_m: -0.07
     cluster_tolerance_m: 0.07
     cluster_min_points: 40
     cluster_max_points: 20000
+
+    candidate_min_3d_largest_extent_m: 0.250
+    candidate_max_3d_largest_extent_m: 0.9
+    candidate_min_3d_middle_extent_m: 0.10
+    candidate_min_3d_depth_extent_m: 0.06
+    candidate_min_3d_depth_to_middle_ratio: 0.10
+    candidate_min_3d_middle_largest_ratio: 0.15
+    candidate_max_3d_middle_largest_ratio: 1.05
+
     normal_search_radius_m: 0.05
     ransac_max_iterations: 250
     ransac_distance_threshold_m: 0.035
@@ -34,7 +47,8 @@ detect_barrel_cpp:
 
     cylinder_fit_residual_max_m: 0.08 #0.05
 
-    horizontal_dot_threshold: 0.55
+    vertical_dot_threshold: 0.75
+    horizontal_dot_threshold: 0.35
 
     use_color_prefilter: true
     candidate_min_area_px: 180.0
@@ -71,7 +85,18 @@ detect_barrel_cpp:
     marker_namespace: barrels
 
     enable_debug_overlay: true
+    enable_debug_mask: true
+    enable_debug_rejections: true
+    enable_debug_rejection_log: true
+    enable_debug_depth_alignment: true
+    enable_debug_depth_validity: true
+    debug_depth_alignment_search_px: 50
+    debug_depth_alignment_step_px: 5
     debug_window_name: barrel
+    debug_mask_window_name: barrel_mask
+    debug_rejection_window_name: barrel_rejections
+    debug_depth_alignment_window_name: barrel_depth_alignment
+    debug_depth_validity_window_name: barrel_depth_validity
     show_debug_window: false
     draw_barrel_outline: true
     draw_blob_metrics: true
