@@ -5,3 +5,4 @@ float32 normal_y
 int8 id
 string color
 bool horizontal
+bool leaking
