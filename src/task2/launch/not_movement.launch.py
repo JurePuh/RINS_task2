@@ -63,4 +63,10 @@ def generate_launch_description():
             name='arm_mover_actions',
             output='screen',
         ),
+        Node(
+            package='barrel_leak_cpp',
+            executable='detect_barrel_cpp',
+            name='detect_barrel_cpp',
+            output='screen',
+        )
     ])
