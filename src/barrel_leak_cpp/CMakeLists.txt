@@ -20,17 +20,17 @@ find_package(PCL REQUIRED COMPONENTS common filters features segmentation search
 find_package(OpenCV REQUIRED)
 find_package(msg_types REQUIRED)
 
-add_executable(detect_barrel_leak_cpp src/barrel_leak_detector.cpp)
-target_compile_features(detect_barrel_leak_cpp PUBLIC cxx_std_17)
-target_include_directories(detect_barrel_leak_cpp SYSTEM PRIVATE
+add_executable(detect_barrel_cpp src/barrel_leak_detector.cpp)
+target_compile_features(detect_barrel_cpp PUBLIC cxx_std_17)
+target_include_directories(detect_barrel_cpp SYSTEM PRIVATE
   ${PCL_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
-target_link_libraries(detect_barrel_leak_cpp
+target_link_libraries(detect_barrel_cpp
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
 )
-ament_target_dependencies(detect_barrel_leak_cpp
+ament_target_dependencies(detect_barrel_cpp
   rclcpp
   sensor_msgs
   geometry_msgs
@@ -44,7 +44,7 @@ ament_target_dependencies(detect_barrel_leak_cpp
   msg_types
 )
 
-install(TARGETS detect_barrel_leak_cpp
+install(TARGETS detect_barrel_cpp
   DESTINATION lib/${PROJECT_NAME}
 )
 

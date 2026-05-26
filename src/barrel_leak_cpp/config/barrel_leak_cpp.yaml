@@ -1,4 +1,4 @@
-detect_barrel_leak_cpp:
+detect_barrel_cpp:
   ros__parameters:
     image_topic: /oakd/rgb/preview/image_raw
     point_cloud_topic: /oakd/rgb/preview/depth/points
@@ -6,8 +6,7 @@ detect_barrel_leak_cpp:
 
     barrel_topic: /barrel_detect
     marker_topic: /barrel_markers
-    leak_topic: /barrel_leak_warning
-    debug_overlay_topic: /barrel_leak/debug_overlay
+    debug_overlay_topic: /barrel/debug_overlay
 
     publish_hz: 2.0
     sync_queue_size: 5
@@ -15,7 +14,9 @@ detect_barrel_leak_cpp:
     first_track_id: 100
     accept_threshold: 4
     dedup_distance_m: 0.45
+    republish_move_threshold_m: 0.05
     track_timeout_frames: 18
+    max_barrel_height_m: 0.42
 
     depth_min_m: 0.15
     depth_max_m: 6.0
@@ -28,8 +29,11 @@ detect_barrel_leak_cpp:
     ransac_normal_distance_weight: 0.1
     cylinder_radius_min_m: 0.08
     cylinder_radius_max_m: 0.45
-    cylinder_inlier_min: 35
-    cylinder_fit_residual_max_m: 0.05
+
+    cylinder_inlier_min: 25 #35
+
+    cylinder_fit_residual_max_m: 0.08 #0.05
+
     horizontal_dot_threshold: 0.55
 
     use_color_prefilter: true
@@ -37,9 +41,13 @@ detect_barrel_leak_cpp:
     candidate_max_area_px: 90000.0
     candidate_min_width_px: 12
     candidate_min_height_px: 12
-    color_confidence_min: 0.45
+
+    color_confidence_min: 0.25 #0.45
+
     mask_morph_open_kernel: 3
-    mask_morph_close_kernel: 9
+
+    mask_morph_close_kernel: 3 #9
+
     allow_gray_fallback_label: false
     gray_saturation_max: 35
 
@@ -47,25 +55,13 @@ detect_barrel_leak_cpp:
     hsv_ranges.green: [35, 70, 35, 90, 255, 255]
     hsv_ranges.blue: [90, 60, 35, 140, 255, 255]
     hsv_ranges.yellow: [16, 80, 50, 35, 255, 255]
+    hsv_ranges.purple: [130, 45, 35, 165, 255, 255]
+    hsv_ranges.orange: [5, 80, 45, 20, 255, 255]
+    hsv_ranges.brown: [5, 35, 20, 25, 190, 170]
+    hsv_ranges.black: [0, 0, 0, 179, 255, 55]
 
-    enable_leak_detection: true
-    enable_leak_roi_restriction: true
-    roi_width_scale: 1.35
-    roi_height_scale: 0.75
-    roi_y_offset_scale: 0.15
-    floor_height_max_m: 0.18
-    floor_contact_tol_m: 0.08
-    leak_hsv_ranges.green: [35, 70, 35, 90, 255, 255]
-    blob_area_min_px: 35.0
-    blob_area_max_px: 15000.0
-    blob_circularity_min: 0.12
-    blob_elongation_max: 5.0
-    opening_distance_max_px_or_m: 120.0
-    axis_alignment_min: 0.25
     stability_window_m: 8
     stability_required_n: 5
-    leak_clear_required_n: 3
-    alert_cooldown_s: 10.0
 
     marker_scale_x: 0.28
     marker_scale_y: 0.28
@@ -75,8 +71,9 @@ detect_barrel_leak_cpp:
     marker_namespace: barrels
 
     enable_debug_overlay: true
-    draw_roi: true
+    debug_window_name: barrel
+    show_debug_window: false
     draw_barrel_outline: true
-    draw_leak_outline: true
     draw_blob_metrics: true
     draw_track_ids: true
+    draw_normal_arrow: true

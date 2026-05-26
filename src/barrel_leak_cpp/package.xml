@@ -3,7 +3,7 @@
 <package format="3">
   <name>barrel_leak_cpp</name>
   <version>0.0.0</version>
-  <description>Isolated C++ PCL barrel and leak detector for RINS task 2.</description>
+  <description>Isolated C++ PCL barrel detector for RINS task 2.</description>
   <maintainer email="jure@puh.si">puhster</maintainer>
   <license>Apache-2.0</license>
 
