@@ -4,6 +4,10 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 import os
 
+# Available worlds (from dis_tutorial3/worlds):
+#   task2_blue_demo, task2_green_demo, task2_yellow_demo,
+WORLD = 'task2_green_demo'
+
 
 def generate_launch_description():
     sim_launch = os.path.join(
@@ -19,5 +23,6 @@ def generate_launch_description():
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(sim_launch),
+            launch_arguments=[('world', WORLD)],
         ),
     ])
