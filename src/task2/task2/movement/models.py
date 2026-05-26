@@ -52,6 +52,7 @@ class Barrel:
     horizontal: bool
     leaking: bool | None = None
     image_path: str | None = None
+    normal: Vector | None = None
 
     @property
     def x(self) -> float:

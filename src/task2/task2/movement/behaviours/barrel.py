@@ -12,14 +12,18 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import (
     NavigateToBlackboardGoal,
+    build_nav_goal,
     lookup_robot_xy,
-    standoff_goal_from_normal,
 )
-from task2.movement.behaviours.conditions import RecomputeNotRequested
-from task2.movement.models import Vector, Barrel
+from task2.movement.behaviours._speak import Speak
+from task2.movement.behaviours.conditions import (
+    IsHeadBarrelLeaking,
+    RecomputeNotRequested,
+)
+from task2.movement.models import Barrel, Pose
 
 
-_BARREL_STANDOFF_M = 0.6
+_BARREL_STANDOFF_M = 1.0
 
 
 def _wrap_to_pi(a: float) -> float:
@@ -64,30 +68,33 @@ class ComputeBarrelDestination(py_trees.behaviour.Behaviour):
 
         robot = lookup_robot_xy(self.tf_buffer, self._ros_logger)
         if robot is None:
+            # Fallback: aim straight at the barrel.
+            goal = build_nav_goal(Pose(barrel.point.x, barrel.point.y, 0.0))
+            self.bb.set(bb.BARREL_DESTINATION, goal)
             self._ros_logger.warning(
-                "ComputeBarrelDestination: robot tf lookup failed; cannot derive "
-                "placeholder barrel-orientation vector. This codepath disappears "
-                "once barrel detection publishes a real orientation — safe to "
-                "ignore as long as it self-recovers on the next tick."
+                f"{self.name}: robot tf lookup failed; falling back to direct "
+                f"goal at barrel {barrel.id} ({barrel.point.x:.2f}, {barrel.point.y:.2f})"
             )
-            return py_trees.common.Status.FAILURE
+            return py_trees.common.Status.SUCCESS
 
-        dx = robot[0] - barrel.point.x
-        dy = robot[1] - barrel.point.y
+        dx = barrel.point.x - robot[0]
+        dy = barrel.point.y - robot[1]
         dist = math.hypot(dx, dy) or 1.0
-        normal = Vector(dx / dist, dy / dist)
-        goal = standoff_goal_from_normal(barrel.point, normal, standoff=_BARREL_STANDOFF_M)
+        ux, uy = dx / dist, dy / dist
+        dest_x = barrel.point.x - _BARREL_STANDOFF_M * ux
+        dest_y = barrel.point.y - _BARREL_STANDOFF_M * uy
+        theta = math.atan2(dy, dx)
+        goal = build_nav_goal(Pose(dest_x, dest_y, theta))
         self.bb.set(bb.BARREL_DESTINATION, goal)
-        gp = goal.pose.pose.position
         self._ros_logger.info(
             f"{self.name}: computed BARREL_DESTINATION for barrel {barrel.id} -> "
-            f"({gp.x:.2f}, {gp.y:.2f}); RECOMPUTE_BARREL_DESTINATION=False"
+            f"({dest_x:.2f}, {dest_y:.2f}, θ={theta:.2f}); "
+            f"RECOMPUTE_BARREL_DESTINATION=False"
         )
         self._ros_logger.debug(
             f"{self.name}: robot=({robot[0]:.2f},{robot[1]:.2f}) "
             f"barrel=({barrel.point.x:.2f},{barrel.point.y:.2f}) "
-            f"normal=({normal.x:.2f},{normal.y:.2f}) dist={dist:.2f} "
-            f"standoff={_BARREL_STANDOFF_M:.2f}"
+            f"dist={dist:.2f} standoff={_BARREL_STANDOFF_M:.2f}"
         )
         return py_trees.common.Status.SUCCESS
 
@@ -159,15 +166,12 @@ class TurnTowardsBarrel(py_trees_ros.action_clients.FromConstant):
 
 
 class CheckBarrelLeak(py_trees.behaviour.Behaviour):
-    """TODO: Currently just sets barrel as not leaking, need the service to check if it is leaking."""
+    """Read the head barrel's leaking flag (populated by /barrel_detect) and update RViz."""
 
     def __init__(self, name: str = "CheckBarrelLeak"):
         super().__init__(name=name)
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
-        self.bb.register_key(
-            key=bb.TASK_INSPECT_BARRELS, access=py_trees.common.Access.READ
-        )
 
     def setup(self, **kwargs):
         self.node = kwargs["node"]
@@ -178,28 +182,23 @@ class CheckBarrelLeak(py_trees.behaviour.Behaviour):
         assert queue is not None, "CheckBarrelLeak: PENDING_BARRELS not found on blackboard"
         barrel: Barrel = queue[0]
 
-        # Set barrel as not leaking (for now)
-        prev = barrel.leaking
-        barrel.leaking = False
-        # Surface the leak result on the barrel's RViz marker.
-        self.node.visualizer.set_barrel_leak(barrel.id, bool(barrel.leaking))  # type: ignore[attr-defined]
+        leaking = bool(barrel.leaking)
+        self.node.visualizer.set_barrel_leak(barrel.id, leaking)  # type: ignore[attr-defined]
         self._ros_logger.info(
-            f"[stub] barrel {barrel.id} marked not-leaking (was leaking={prev})"
-        )
-        self._ros_logger.debug(
-            f"{self.name}: barrel {barrel.id} color={barrel.color} "
-            f"horiz={barrel.horizontal} pos=({barrel.point.x:.2f},{barrel.point.y:.2f})"
+            f"{self.name}: barrel {barrel.id} leaking={leaking} "
+            f"(color={barrel.color}, horiz={barrel.horizontal})"
         )
         return py_trees.common.Status.SUCCESS
 
 
 class ClearActiveBarrel(py_trees.behaviour.Behaviour):
-    """Pop the now-handled barrel off PENDING_BARRELS."""
+    """Pop the now-handled barrel off PENDING_BARRELS and mark it handled."""
 
     def __init__(self, name: str = "ClearActiveBarrel"):
         super().__init__(name=name)
         self.bb = self.attach_blackboard_client(name=self.name)
         self.bb.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.WRITE)
+        self.bb.register_key(key=bb.HANDLED_BARRELS, access=py_trees.common.Access.WRITE)
 
     def setup(self, **kwargs):
         self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
@@ -207,11 +206,14 @@ class ClearActiveBarrel(py_trees.behaviour.Behaviour):
     def update(self) -> py_trees.common.Status:
         queue = self.bb.get(bb.PENDING_BARRELS)
         assert queue is not None, "ClearActiveBarrel: PENDING_BARRELS not found on blackboard"
-        
-        # Remove seen barrel
+        handled = self.bb.get(bb.HANDLED_BARRELS)
+        assert handled is not None, "ClearActiveBarrel: HANDLED_BARRELS not found on blackboard"
+
         barrel: Barrel = queue.popleft()
+        handled.add(barrel.id)
         self._ros_logger.info(
-            f"cleared barrel {barrel.id} from queue; remaining={len(queue)}"
+            f"cleared barrel {barrel.id} from queue; remaining={len(queue)} "
+            f"handled={len(handled)}"
         )
         return py_trees.common.Status.SUCCESS
 
@@ -231,12 +233,26 @@ def build() -> py_trees.composites.Sequence:
         ),
     ])
 
+    alert_if_leaking = py_trees.composites.Selector(
+        name="AlertIfLeaking", memory=False,
+    )
+    leak_branch = py_trees.composites.Sequence(name="LeakBranch", memory=False)
+    leak_branch.add_children([
+        IsHeadBarrelLeaking(),
+        Speak("Leaking barrel alert alert!", name="SpeakLeakAlert"),
+    ])
+    alert_if_leaking.add_children([
+        leak_branch,
+        py_trees.behaviours.Success(name="NoLeak"),
+    ])
+
     seq = py_trees.composites.Sequence(name="GoAndInspectBarrel", memory=True)
     seq.add_children([
         ComputeBarrelDestination(),
         drive_or_recompute,
         TurnTowardsBarrel(),
         CheckBarrelLeak(),
+        alert_if_leaking,
         ClearActiveBarrel(),
     ])
     return seq

@@ -16,6 +16,7 @@ from task2.movement.models import (
     Person,
     Point,
     Ring,
+    Vector,
 )
 
 
@@ -27,7 +28,8 @@ def _seed_blackboard() -> None:
         bb.CONVERSATION_RESULT, bb.LAST_HANDLED_PERSON,
         bb.TASK_COUNT_RINGS, bb.TASK_INSPECT_BARRELS,
         bb.TASK_ANOMALY_RED, bb.TASK_ANOMALY_GREEN,
-        bb.PENDING_BARRELS, bb.BARREL_ACTIVE,
+        bb.PENDING_BARRELS, bb.BARREL_ACTIVE, bb.HANDLED_BARRELS,
+        bb.BARREL_DESTINATION, bb.RECOMPUTE_BARREL_DESTINATION,
         bb.ANOMALY_RED_ACTIVE, bb.ANOMALY_GREEN_ACTIVE,
     ]
     for k in keys:
@@ -43,6 +45,9 @@ def _seed_blackboard() -> None:
     w.set(bb.TASK_ANOMALY_RED, AnomalyTask()) # AnomalyTask() 
     w.set(bb.TASK_ANOMALY_GREEN, AnomalyTask()) # AnomalyTask() 
     w.set(bb.PENDING_BARRELS, deque()) # deque()
+    w.set(bb.HANDLED_BARRELS, set()) # set[int]
+    w.set(bb.BARREL_DESTINATION, None) # None
+    w.set(bb.RECOMPUTE_BARREL_DESTINATION, False) # False
     w.set(bb.BARREL_ACTIVE, None) # None
     w.set(bb.ANOMALY_RED_ACTIVE, False) # False
     w.set(bb.ANOMALY_GREEN_ACTIVE, False) # False
@@ -156,17 +161,26 @@ def attach_barrel_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     reader = py_trees.blackboard.Client(name="barrel_subscription")
     reader.register_key(key=bb.TASK_INSPECT_BARRELS, access=py_trees.common.Access.READ)
     reader.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
+    reader.register_key(key=bb.HANDLED_BARRELS, access=py_trees.common.Access.READ)
+    reader.register_key(key=bb.RECOMPUTE_BARREL_DESTINATION, access=py_trees.common.Access.WRITE)
 
     def on_barrel(msg: BarrelDetect) -> None:
         task = reader.get(bb.TASK_INSPECT_BARRELS)
         queue = reader.get(bb.PENDING_BARRELS)
+        handled = reader.get(bb.HANDLED_BARRELS)
         bid = msg.id
         viz.update_barrel(bid, msg.x, msg.y, msg.color, msg.horizontal)
         logger.debug(
             f"on_barrel: id={bid} color={msg.color} horiz={msg.horizontal} "
-            f"xy=({msg.x:.2f},{msg.y:.2f}) known_total={len(task.barrels)} "
-            f"pending_queue={len(queue)}"
+            f"leaking={msg.leaking} xy=({msg.x:.2f},{msg.y:.2f}) "
+            f"normal=({msg.normal_x:.2f},{msg.normal_y:.2f}) "
+            f"known_total={len(task.barrels)} pending_queue={len(queue)} "
+            f"handled={len(handled)}"
         )
+
+        if bid in handled:
+            logger.info(f"on_barrel: already handled barrel {bid}; ignoring")
+            return
 
         # Check if this is an already-known barrel with an updated location
         existing = next((b for b in task.barrels if b.id == bid), None)
@@ -174,15 +188,30 @@ def attach_barrel_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
             existing.point = Point(msg.x, msg.y)
             existing.color = msg.color
             existing.horizontal = msg.horizontal
+            existing.leaking = msg.leaking
+            existing.image_path = msg.path_to_image
+            existing.normal = Vector(msg.normal_x, msg.normal_y)
+            if queue and queue[0].id == bid:
+                reader.set(bb.RECOMPUTE_BARREL_DESTINATION, True)
+                logger.info(
+                    f"on_barrel: head-of-queue barrel {bid} moved; "
+                    f"RECOMPUTE_BARREL_DESTINATION=True"
+                )
             logger.info(
                 f"on_barrel: updated barrel {bid} to ({msg.x:.2f}, {msg.y:.2f}) "
-                f"color={msg.color} horiz={msg.horizontal}"
+                f"color={msg.color} horiz={msg.horizontal} leaking={msg.leaking}"
             )
             return
 
         # Otherwise, add new barrel to task list (and pending queue, if horizontal)
         barrel = Barrel(
-            point=Point(msg.x, msg.y), color=msg.color, horizontal=msg.horizontal, id=bid,
+            id=bid,
+            point=Point(msg.x, msg.y),
+            color=msg.color,
+            horizontal=msg.horizontal,
+            leaking=msg.leaking,
+            image_path=msg.path_to_image,
+            normal=Vector(msg.normal_x, msg.normal_y),
         )
         task.barrels.append(barrel)
         if barrel.horizontal:

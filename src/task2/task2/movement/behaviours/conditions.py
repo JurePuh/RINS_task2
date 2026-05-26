@@ -111,6 +111,30 @@ class BarrelVisitPending(py_trees.behaviour.Behaviour):
             self._last_status = status
         return status
 
+class IsHeadBarrelLeaking(py_trees.behaviour.Behaviour):
+    """SUCCESS iff PENDING_BARRELS[0].leaking is True."""
+
+    def __init__(self, name: str = "IsHeadBarrelLeaking"):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=self.name)
+        self.bb.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
+
+    def setup(self, **kwargs):
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+
+    def update(self) -> py_trees.common.Status:
+        queue = self.bb.get(bb.PENDING_BARRELS)
+        if not queue:
+            return py_trees.common.Status.FAILURE
+        leaking = bool(queue[0].leaking)
+        self._ros_logger.info(
+            f"{self.name}: barrel {queue[0].id} leaking={leaking}"
+        )
+        return (
+            py_trees.common.Status.SUCCESS if leaking else py_trees.common.Status.FAILURE
+        )
+
+
 # --- NAVIGATION ----
 
 class RecomputeNotRequested(py_trees.behaviour.Behaviour):

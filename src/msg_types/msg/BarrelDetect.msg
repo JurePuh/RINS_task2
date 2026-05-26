@@ -6,3 +6,4 @@ int8 id
 string color
 bool horizontal
 bool leaking
+string path_to_image

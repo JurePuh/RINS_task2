@@ -11,7 +11,6 @@ from geometry_msgs.msg import TwistStamped
 from nav2_msgs.action import Spin
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.publisher import Publisher
-from std_msgs.msg import String
 
 from rclpy.node import Node
 from rclpy.task import Future
@@ -21,6 +20,7 @@ from msg_types.srv import ClassifyFace
 
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._arm import SetArmPosition
+from task2.movement.behaviours._speak import Speak
 from task2.movement.behaviours._nav import LoggingNavWaypoint, SERVICE_TIMEOUT_SEC, build_nav_goal
 from task2.movement.behaviours._odom_move import SpinByYaw
 from task2.movement.log_utils import log_throttled
@@ -280,26 +280,6 @@ class _FullSpin(py_trees_ros.action_clients.FromConstant):
         )
 
 
-class _Speak(py_trees.behaviour.Behaviour):
-    """Fire-and-forget publish to /speak; SUCCESS immediately."""
-
-    def __init__(self, line: str, name: str = "Speak"):
-        super().__init__(name=name)
-        self._line = line
-
-    def setup(self, **kwargs):
-        node = kwargs["node"]
-        self._ros_logger = node.get_logger()
-        self._pub: Publisher = node.create_publisher(String, "/speak", 10)
-
-    def update(self) -> py_trees.common.Status:
-        msg = String()
-        msg.data = self._line
-        self._pub.publish(msg)
-        self._ros_logger.info(f"{self.name}: '{self._line}'")
-        return py_trees.common.Status.SUCCESS
-
-
 class _Shutdown(py_trees.behaviour.Behaviour):
     """Call rclpy.shutdown() so the node exits."""
 
@@ -319,7 +299,7 @@ class _Shutdown(py_trees.behaviour.Behaviour):
 def FinalDance(name: str = "FinalDance") -> py_trees.composites.Sequence:
     """Start speaking, spin 360deg while the speech plays out, then shut down."""
     seq = py_trees.composites.Sequence(name=name, memory=True)
-    seq.add_children([_Speak(_END_LINE), _FullSpin(), _Shutdown()])
+    seq.add_children([Speak(_END_LINE), _FullSpin(), _Shutdown()])
     return seq
 
 
