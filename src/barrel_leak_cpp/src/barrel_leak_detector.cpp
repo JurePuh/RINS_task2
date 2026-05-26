@@ -69,6 +69,29 @@ struct Candidate
   bool horizontal{false};
   int inliers{0};
   float residual{0.0F};
+  std::vector<cv::Point> ransac_inlier_pixels;
+};
+
+struct PixelCluster
+{
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud{new pcl::PointCloud<pcl::PointXYZRGB>()};
+  std::vector<cv::Point> pixels;
+};
+
+struct LeakDebugCandidate
+{
+  std::string color;
+  cv::Rect bbox;
+  std::vector<cv::Point> contour;
+  int point_count{0};
+  double area_px{0.0};
+  float centroid_z{0.0F};
+  float source_min_z{0.0F};
+  float source_max_z{0.0F};
+  float thickness_m{0.0F};
+  float distance_m{0.0F};
+  bool accepted{false};
+  std::string reason;
 };
 
 struct DebugRegion
@@ -105,8 +128,16 @@ struct BarrelTrack
   int missed_frames{0};
   bool accepted{false};
   bool published{false};
+  bool leaking{false};
+  bool leak_confirmed_once{false};
+  int leak_positive_count{0};
+  int leak_negative_count{0};
   float last_published_x{0.0F};
   float last_published_y{0.0F};
+  float last_published_normal_x{0.0F};
+  float last_published_normal_y{0.0F};
+  std::string last_published_color;
+  bool last_published_leaking{false};
   cv::Rect last_bbox;
 
   std::string color() const
@@ -191,6 +222,8 @@ public:
       create_publisher<sensor_msgs::msg::Image>(debug_depth_alignment_topic_, 10);
     debug_depth_validity_pub_ =
       create_publisher<sensor_msgs::msg::Image>(debug_depth_validity_topic_, 10);
+    debug_leak_pub_ =
+      create_publisher<sensor_msgs::msg::Image>(debug_leak_overlay_topic_, 10);
 
     image_sub_.subscribe(this, image_topic_, rmw_qos_profile_sensor_data);
     cloud_sub_.subscribe(this, point_cloud_topic_, rmw_qos_profile_sensor_data);
@@ -226,6 +259,7 @@ private:
     declare_parameter("debug_rejection_topic", "/barrel/debug_rejections");
     declare_parameter("debug_depth_alignment_topic", "/barrel/debug_depth_alignment");
     declare_parameter("debug_depth_validity_topic", "/barrel/debug_depth_validity");
+    declare_parameter("debug_leak_overlay_topic", "/barrel/debug_leak_overlay");
     declare_parameter("publish_hz", 2.0);
     declare_parameter("sync_queue_size", 5);
     declare_parameter("sync_slop_s", 0.08);
@@ -233,6 +267,7 @@ private:
     declare_parameter("accept_threshold", 4);
     declare_parameter("dedup_distance_m", 0.45);
     declare_parameter("republish_move_threshold_m", 0.05);
+    declare_parameter("republish_rotation_threshold_rad", 0.1);
     declare_parameter("track_timeout_frames", 18);
     declare_parameter("max_barrel_height_m", 0.70);
     declare_parameter("depth_min_m", 0.15);
@@ -281,6 +316,21 @@ private:
     declare_parameter("enable_debug_rejection_log", true);
     declare_parameter("enable_debug_depth_alignment", true);
     declare_parameter("enable_debug_depth_validity", true);
+    declare_parameter("enable_debug_leak_overlay", true);
+    declare_parameter("leak_search_padding_px", 60);
+    declare_parameter("leak_ransac_inlier_dilate_px", 9);
+    declare_parameter("leak_min_area_px", 80.0);
+    declare_parameter("leak_max_area_px", 20000.0);
+    declare_parameter("leak_min_points", 15);
+    declare_parameter("leak_min_height_m", 0.005);
+    declare_parameter("leak_max_height_m", 0.08);
+    declare_parameter("leak_all_points_max_source_z_m", -0.21);
+    declare_parameter("leak_reject_all_points_below_source_z_m", -0.24);
+    declare_parameter("leak_max_thickness_m", 0.035);
+    declare_parameter("leak_max_distance_from_barrel_m", 0.85);
+    declare_parameter("leak_horizontal_barrels_only", true);
+    declare_parameter("leak_confirm_threshold", 3);
+    declare_parameter("leak_clear_threshold", 3);
     declare_parameter("debug_depth_alignment_search_px", 50);
     declare_parameter("debug_depth_alignment_step_px", 5);
     declare_parameter("debug_window_name", "barrel");
@@ -288,6 +338,7 @@ private:
     declare_parameter("debug_rejection_window_name", "barrel_rejections");
     declare_parameter("debug_depth_alignment_window_name", "barrel_depth_alignment");
     declare_parameter("debug_depth_validity_window_name", "barrel_depth_validity");
+    declare_parameter("debug_leak_window_name", "barrel_leak");
     declare_parameter("show_debug_window", false);
     declare_parameter("draw_barrel_outline", true);
     declare_parameter("draw_blob_metrics", true);
@@ -315,6 +366,7 @@ private:
     debug_rejection_topic_ = get_parameter("debug_rejection_topic").as_string();
     debug_depth_alignment_topic_ = get_parameter("debug_depth_alignment_topic").as_string();
     debug_depth_validity_topic_ = get_parameter("debug_depth_validity_topic").as_string();
+    debug_leak_overlay_topic_ = get_parameter("debug_leak_overlay_topic").as_string();
     publish_hz_ = get_parameter("publish_hz").as_double();
     sync_queue_size_ = static_cast<uint32_t>(get_parameter("sync_queue_size").as_int());
     sync_slop_s_ = get_parameter("sync_slop_s").as_double();
@@ -322,6 +374,7 @@ private:
     accept_threshold_ = static_cast<int>(get_parameter("accept_threshold").as_int());
     dedup_distance_m_ = get_parameter("dedup_distance_m").as_double();
     republish_move_threshold_m_ = get_parameter("republish_move_threshold_m").as_double();
+    republish_rotation_threshold_rad_ = get_parameter("republish_rotation_threshold_rad").as_double();
     track_timeout_frames_ = static_cast<int>(get_parameter("track_timeout_frames").as_int());
     max_barrel_height_m_ = get_parameter("max_barrel_height_m").as_double();
     depth_min_m_ = get_parameter("depth_min_m").as_double();
@@ -370,6 +423,26 @@ private:
     enable_debug_rejection_log_ = get_parameter("enable_debug_rejection_log").as_bool();
     enable_debug_depth_alignment_ = get_parameter("enable_debug_depth_alignment").as_bool();
     enable_debug_depth_validity_ = get_parameter("enable_debug_depth_validity").as_bool();
+    enable_debug_leak_overlay_ = get_parameter("enable_debug_leak_overlay").as_bool();
+    leak_search_padding_px_ = static_cast<int>(get_parameter("leak_search_padding_px").as_int());
+    leak_ransac_inlier_dilate_px_ =
+      static_cast<int>(get_parameter("leak_ransac_inlier_dilate_px").as_int());
+    leak_min_area_px_ = get_parameter("leak_min_area_px").as_double();
+    leak_max_area_px_ = get_parameter("leak_max_area_px").as_double();
+    leak_min_points_ = static_cast<int>(get_parameter("leak_min_points").as_int());
+    leak_min_height_m_ = get_parameter("leak_min_height_m").as_double();
+    leak_max_height_m_ = get_parameter("leak_max_height_m").as_double();
+    leak_all_points_max_source_z_m_ =
+      get_parameter("leak_all_points_max_source_z_m").as_double();
+    leak_reject_all_points_below_source_z_m_ =
+      get_parameter("leak_reject_all_points_below_source_z_m").as_double();
+    leak_max_thickness_m_ = get_parameter("leak_max_thickness_m").as_double();
+    leak_max_distance_from_barrel_m_ = get_parameter("leak_max_distance_from_barrel_m").as_double();
+    leak_horizontal_barrels_only_ = get_parameter("leak_horizontal_barrels_only").as_bool();
+    leak_confirm_threshold_ =
+      std::max(1, static_cast<int>(get_parameter("leak_confirm_threshold").as_int()));
+    leak_clear_threshold_ =
+      std::max(1, static_cast<int>(get_parameter("leak_clear_threshold").as_int()));
     debug_depth_alignment_search_px_ =
       static_cast<int>(get_parameter("debug_depth_alignment_search_px").as_int());
     debug_depth_alignment_step_px_ =
@@ -381,6 +454,7 @@ private:
       get_parameter("debug_depth_alignment_window_name").as_string();
     debug_depth_validity_window_name_ =
       get_parameter("debug_depth_validity_window_name").as_string();
+    debug_leak_window_name_ = get_parameter("debug_leak_window_name").as_string();
     show_debug_window_ = get_parameter("show_debug_window").as_bool();
     draw_barrel_outline_ = get_parameter("draw_barrel_outline").as_bool();
     draw_blob_metrics_ = get_parameter("draw_blob_metrics").as_bool();
@@ -453,6 +527,9 @@ private:
     if (enable_debug_depth_alignment_) {
       publish_depth_alignment(cv_ptr->image, debug_alignments, image_msg->header);
     }
+    if (enable_debug_leak_overlay_) {
+      publish_leak_overlay(cv_ptr->image, hsv, organized, candidates, image_msg->header);
+    }
     if (enable_debug_rejection_log_) {
       log_rejection_summary(candidates, debug_regions);
     }
@@ -495,8 +572,8 @@ private:
         }
 
         int finite_depth_points = 0;
-        auto cluster_clouds = clusters_from_contour(contour, bbox, organized, &finite_depth_points);
-        if (cluster_clouds.empty()) {
+        auto clusters = clusters_from_contour(contour, bbox, organized, &finite_depth_points);
+        if (clusters.empty()) {
           const std::string reason = finite_depth_points < cluster_min_points_ ? "depth" : "cluster";
           add_debug_region(
             color, reason, contour, bbox, debug_regions, finite_depth_points,
@@ -505,7 +582,7 @@ private:
             debug_alignments->push_back(find_best_depth_alignment(color, contour, bbox, organized));
           }
         }
-        for (const auto & cluster : cluster_clouds) {
+        for (const auto & cluster : clusters) {
           Candidate candidate;
           candidate.color = color;
           candidate.confidence = confidence;
@@ -514,7 +591,7 @@ private:
           candidate.contour = contour;
           std::string extent_reason;
           float extent_metric = std::numeric_limits<float>::quiet_NaN();
-          if (!passes_candidate_extent_gate(cluster, &candidate, &extent_reason, &extent_metric)) {
+          if (!passes_candidate_extent_gate(cluster.cloud, &candidate, &extent_reason, &extent_metric)) {
             add_debug_region(color, extent_reason, contour, bbox, debug_regions, 0, extent_metric);
             continue;
           }
@@ -733,7 +810,7 @@ private:
     return mask;
   }
 
-  std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clusters_from_contour(
+  std::vector<PixelCluster> clusters_from_contour(
     const std::vector<cv::Point> & contour,
     const cv::Rect & bbox,
     const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
@@ -744,6 +821,7 @@ private:
     cv::drawContours(contour_mask, contours, 0, cv::Scalar(255), cv::FILLED);
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+    std::vector<cv::Point> pixels;
     const int x_end = std::min(bbox.x + bbox.width, static_cast<int>(organized->width));
     const int y_end = std::min(bbox.y + bbox.height, static_cast<int>(organized->height));
     for (int y = std::max(0, bbox.y); y < y_end; ++y) {
@@ -752,10 +830,11 @@ private:
           continue;
         }
         const auto & point = organized->at(x, y);
-        if (!pcl::isFinite(point) || point.z < depth_min_m_ || point.z > depth_max_m_) {
+        if (!pcl::isFinite(point) || point.z > depth_max_m_) {
           continue;
         }
         cloud->push_back(point);
+        pixels.emplace_back(x, y);
       }
     }
     if (finite_depth_points != nullptr) {
@@ -776,12 +855,16 @@ private:
     ec.setInputCloud(cloud);
     ec.extract(cluster_indices);
 
-    std::vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clusters;
+    std::vector<PixelCluster> clusters;
     for (const auto & indices : cluster_indices) {
-      pcl::PointCloud<pcl::PointXYZRGB>::Ptr cluster(new pcl::PointCloud<pcl::PointXYZRGB>());
-      cluster->reserve(indices.indices.size());
+      PixelCluster cluster;
+      cluster.cloud->reserve(indices.indices.size());
+      cluster.pixels.reserve(indices.indices.size());
       for (const int idx : indices.indices) {
-        cluster->push_back((*cloud)[idx]);
+        cluster.cloud->push_back((*cloud)[idx]);
+        if (idx >= 0 && idx < static_cast<int>(pixels.size())) {
+          cluster.pixels.push_back(pixels[idx]);
+        }
       }
       clusters.push_back(cluster);
     }
@@ -789,11 +872,12 @@ private:
   }
 
   bool fit_cylinder(
-    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,
+    const PixelCluster & cluster,
     Candidate & candidate,
     std::string * reject_reason = nullptr,
     float * reject_metric = nullptr)
   {
+    const auto & cloud = cluster.cloud;
     if (static_cast<int>(cloud->size()) < cylinder_inlier_min_) {
       if (reject_reason != nullptr) {
         *reject_reason = "points";
@@ -873,6 +957,13 @@ private:
     candidate.axis = axis;
     candidate.inliers = static_cast<int>(inliers->indices.size());
     candidate.residual = residual;
+    candidate.ransac_inlier_pixels.clear();
+    candidate.ransac_inlier_pixels.reserve(inliers->indices.size());
+    for (const int idx : inliers->indices) {
+      if (idx >= 0 && idx < static_cast<int>(cluster.pixels.size())) {
+        candidate.ransac_inlier_pixels.push_back(cluster.pixels[idx]);
+      }
+    }
     return true;
   }
 
@@ -1118,7 +1209,42 @@ private:
     }
     const double dx = track.x - track.last_published_x;
     const double dy = track.y - track.last_published_y;
-    return std::hypot(dx, dy) > republish_move_threshold_m_;
+    if (std::hypot(dx, dy) > republish_move_threshold_m_) {
+      return true;
+    }
+    if (track.color() != track.last_published_color) {
+      return true;
+    }
+    if (track.leaking != track.last_published_leaking) {
+      return true;
+    }
+    const Eigen::Vector2f current_normal = published_normal(track);
+    const Eigen::Vector2f last_normal(track.last_published_normal_x, track.last_published_normal_y);
+    return normal_angle_delta(current_normal, last_normal) > republish_rotation_threshold_rad_;
+  }
+
+  static Eigen::Vector2f published_normal(const BarrelTrack & track)
+  {
+    if (!track.horizontal()) {
+      return Eigen::Vector2f::Zero();
+    }
+    return {track.normal_x, track.normal_y};
+  }
+
+  static double normal_angle_delta(Eigen::Vector2f a, Eigen::Vector2f b)
+  {
+    const float a_norm = a.norm();
+    const float b_norm = b.norm();
+    if (a_norm < 1e-4F && b_norm < 1e-4F) {
+      return 0.0;
+    }
+    if (a_norm < 1e-4F || b_norm < 1e-4F) {
+      return std::numeric_limits<double>::infinity();
+    }
+    a /= a_norm;
+    b /= b_norm;
+    const float dot = std::clamp(a.dot(b), -1.0F, 1.0F);
+    return std::acos(dot);
   }
 
   const BarrelTrack * matching_track_for_candidate(const Candidate & candidate) const
@@ -1135,6 +1261,45 @@ private:
       }
     }
     return best_track;
+  }
+
+  int matching_track_index_for_candidate(const Candidate & candidate) const
+  {
+    int best_idx = -1;
+    double best_dist = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < tracks_.size(); ++i) {
+      const double dx = tracks_[i].x - candidate.centroid_map.x();
+      const double dy = tracks_[i].y - candidate.centroid_map.y();
+      const double dist = std::hypot(dx, dy);
+      if (dist < best_dist && dist <= dedup_distance_m_) {
+        best_dist = dist;
+        best_idx = static_cast<int>(i);
+      }
+    }
+    return best_idx;
+  }
+
+  void update_track_leak_state(BarrelTrack & track, bool leak_detected)
+  {
+    if (leak_detected) {
+      track.leak_negative_count = 0;
+      track.leak_positive_count += 1;
+      if (track.leak_confirmed_once || track.leak_positive_count >= leak_confirm_threshold_) {
+        track.leaking = true;
+        track.leak_confirmed_once = true;
+      }
+      return;
+    }
+
+    track.leak_positive_count = 0;
+    if (!track.leaking) {
+      track.leak_negative_count = 0;
+      return;
+    }
+    track.leak_negative_count += 1;
+    if (track.leak_negative_count >= leak_clear_threshold_) {
+      track.leaking = false;
+    }
   }
 
   void publish_tracks()
@@ -1154,10 +1319,16 @@ private:
         msg.id = static_cast<int8_t>(std::clamp(track.id, 0, 127));
         msg.color = track.color();
         msg.horizontal = track.horizontal();
+        msg.leaking = track.leaking;
         barrel_pub_->publish(msg);
         track.published = true;
         track.last_published_x = track.x;
         track.last_published_y = track.y;
+        const Eigen::Vector2f normal = published_normal(track);
+        track.last_published_normal_x = normal.x();
+        track.last_published_normal_y = normal.y();
+        track.last_published_color = msg.color;
+        track.last_published_leaking = msg.leaking;
       }
 
       visualization_msgs::msg::Marker marker;
@@ -1346,6 +1517,252 @@ private:
     }
   }
 
+  void publish_leak_overlay(
+    const cv::Mat & image,
+    const cv::Mat & hsv,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
+    const std::vector<Candidate> & candidates,
+    const std_msgs::msg::Header & header)
+  {
+    cv::Mat overlay = image.clone();
+    std::vector<LeakDebugCandidate> leak_candidates;
+    std::vector<bool> leak_observed_by_track(tracks_.size(), false);
+    std::vector<bool> leak_positive_by_track(tracks_.size(), false);
+
+    for (const auto & barrel : candidates) {
+      if (leak_horizontal_barrels_only_ && !barrel.horizontal) {
+        continue;
+      }
+      const int track_idx = matching_track_index_for_candidate(barrel);
+      if (track_idx >= 0) {
+        leak_observed_by_track[static_cast<size_t>(track_idx)] = true;
+      }
+
+      cv::Mat barrel_inliers = cv::Mat::zeros(image.size(), CV_8UC1);
+      const int inlier_radius = std::max(0, leak_ransac_inlier_dilate_px_);
+      for (const auto & pixel : barrel.ransac_inlier_pixels) {
+        if (pixel.x < 0 || pixel.y < 0 || pixel.x >= image.cols || pixel.y >= image.rows) {
+          continue;
+        }
+        cv::circle(barrel_inliers, pixel, std::max(1, inlier_radius), cv::Scalar(255), cv::FILLED);
+      }
+
+      const cv::Rect image_rect(0, 0, image.cols, image.rows);
+      cv::Rect search = barrel.bbox;
+      search.x -= leak_search_padding_px_;
+      search.y -= leak_search_padding_px_;
+      search.width += leak_search_padding_px_ * 2;
+      search.height += leak_search_padding_px_ * 2;
+      search &= image_rect;
+      if (search.area() <= 0) {
+        continue;
+      }
+
+      cv::rectangle(overlay, search, {255, 255, 0}, 1);
+
+      for (const auto & [leak_color_name, ranges] : hsv_ranges_) {
+        cv::Mat leak_mask = build_mask(hsv, ranges);
+        cv::Mat not_barrel_inliers;
+        cv::bitwise_not(barrel_inliers, not_barrel_inliers);
+        cv::bitwise_and(leak_mask, not_barrel_inliers, leak_mask);
+        cv::Mat roi_mask = leak_mask(search).clone();
+
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(roi_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+        for (auto contour : contours) {
+          for (auto & point : contour) {
+            point.x += search.x;
+            point.y += search.y;
+          }
+
+          LeakDebugCandidate leak;
+          leak.color = leak_color_name;
+          leak.contour = contour;
+          leak.bbox = cv::boundingRect(contour);
+          leak.area_px = cv::contourArea(contour);
+          evaluate_leak_candidate(barrel, leak, organized, header);
+          if (leak.accepted && track_idx >= 0) {
+            leak_positive_by_track[static_cast<size_t>(track_idx)] = true;
+          }
+          leak_candidates.push_back(leak);
+        }
+      }
+    }
+
+    const size_t track_count = std::min(tracks_.size(), leak_observed_by_track.size());
+    for (size_t i = 0; i < track_count; ++i) {
+      if (leak_observed_by_track[i]) {
+        update_track_leak_state(tracks_[i], leak_positive_by_track[i]);
+      }
+    }
+
+    for (const auto & barrel : candidates) {
+      const auto color = draw_color(barrel.color);
+      cv::rectangle(overlay, barrel.bbox, color, 1);
+      for (const auto & pixel : barrel.ransac_inlier_pixels) {
+        if (pixel.x >= 0 && pixel.y >= 0 && pixel.x < image.cols && pixel.y < image.rows) {
+          overlay.at<cv::Vec3b>(pixel.y, pixel.x) = cv::Vec3b(255, 255, 255);
+        }
+      }
+    }
+
+    for (const auto & leak : leak_candidates) {
+      const cv::Scalar color = leak.accepted ? cv::Scalar(255, 0, 255) : cv::Scalar(80, 80, 80);
+      const int thickness = leak.accepted ? 3 : 1;
+      std::vector<std::vector<cv::Point>> contours{leak.contour};
+      cv::drawContours(overlay, contours, 0, color, thickness);
+      cv::rectangle(overlay, leak.bbox, color, thickness);
+
+      std::string label;
+      if (leak.accepted) {
+        label =
+          "LEAK " + leak.color +
+          " area " + std::to_string(static_cast<int>(leak.area_px)) +
+          " z " + std::to_string(leak.centroid_z).substr(0, 5) +
+          " src " + std::to_string(leak.source_min_z).substr(0, 5) +
+          ".." + std::to_string(leak.source_max_z).substr(0, 5);
+      } else {
+        label = "leak reject:" + leak.reason;
+      }
+      cv::putText(
+        overlay, label, {leak.bbox.x, std::max(15, leak.bbox.y - 6)},
+        cv::FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv::LINE_AA);
+    }
+
+    auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
+    debug_leak_pub_->publish(*out);
+
+    if (show_debug_window_) {
+      cv::imshow(debug_leak_window_name_, overlay);
+      cv::waitKey(1);
+    }
+  }
+
+  void evaluate_leak_candidate(
+    const Candidate & barrel,
+    LeakDebugCandidate & leak,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized,
+    const std_msgs::msg::Header & header)
+  {
+    if (leak.area_px < leak_min_area_px_ || leak.area_px > leak_max_area_px_) {
+      leak.reason = "area";
+      return;
+    }
+
+    cv::Mat contour_mask = cv::Mat::zeros(
+      static_cast<int>(organized->height), static_cast<int>(organized->width), CV_8UC1);
+    std::vector<std::vector<cv::Point>> contours{leak.contour};
+    cv::drawContours(contour_mask, contours, 0, cv::Scalar(255), cv::FILLED);
+
+    std::vector<Eigen::Vector3f> map_points;
+    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+    float source_min_z = std::numeric_limits<float>::max();
+    float source_max_z = -std::numeric_limits<float>::max();
+    const int x_end = std::min(leak.bbox.x + leak.bbox.width, static_cast<int>(organized->width));
+    const int y_end = std::min(leak.bbox.y + leak.bbox.height, static_cast<int>(organized->height));
+    for (int y = std::max(0, leak.bbox.y); y < y_end; ++y) {
+      for (int x = std::max(0, leak.bbox.x); x < x_end; ++x) {
+        if (contour_mask.at<uint8_t>(y, x) == 0) {
+          continue;
+        }
+        const auto & point = organized->at(x, y);
+        if (!pcl::isFinite(point) || point.z < depth_min_m_ || point.z > depth_max_m_) {
+          continue;
+        }
+        source_min_z = std::min(source_min_z, point.z);
+        source_max_z = std::max(source_max_z, point.z);
+
+        Eigen::Vector3f map_point;
+        if (!transform_point_to_target(header, Eigen::Vector3f(point.x, point.y, point.z), &map_point)) {
+          leak.reason = "tf";
+          return;
+        }
+        map_points.push_back(map_point);
+        centroid += map_point;
+      }
+    }
+
+    leak.point_count = static_cast<int>(map_points.size());
+    if (leak.point_count < leak_min_points_) {
+      leak.reason = "points";
+      return;
+    }
+    leak.source_min_z = source_min_z;
+    leak.source_max_z = source_max_z;
+    if (leak.source_max_z > leak_all_points_max_source_z_m_) {
+      leak.reason = "source_high";
+      return;
+    }
+    if (leak.source_max_z <= leak_reject_all_points_below_source_z_m_) {
+      leak.reason = "source_floor";
+      return;
+    }
+
+    centroid /= static_cast<float>(map_points.size());
+    leak.centroid_z = centroid.z();
+    leak.distance_m = std::hypot(
+      centroid.x() - barrel.centroid_map.x(), centroid.y() - barrel.centroid_map.y());
+    if (leak.distance_m > leak_max_distance_from_barrel_m_) {
+      leak.reason = "distance";
+      return;
+    }
+    if (leak.centroid_z < leak_min_height_m_ || leak.centroid_z > leak_max_height_m_) {
+      leak.reason = "height";
+      return;
+    }
+
+    Eigen::Vector3f min_pt = map_points.front();
+    Eigen::Vector3f max_pt = map_points.front();
+    for (const auto & point : map_points) {
+      min_pt = min_pt.cwiseMin(point);
+      max_pt = max_pt.cwiseMax(point);
+    }
+    std::array<float, 3> extents{
+      std::abs(max_pt.x() - min_pt.x()),
+      std::abs(max_pt.y() - min_pt.y()),
+      std::abs(max_pt.z() - min_pt.z())};
+    std::sort(extents.begin(), extents.end());
+    leak.thickness_m = extents[0];
+    if (leak.thickness_m > leak_max_thickness_m_) {
+      leak.reason = "thick";
+      return;
+    }
+
+    leak.accepted = true;
+    leak.reason = "accepted";
+  }
+
+  bool transform_point_to_target(
+    const std_msgs::msg::Header & source_header,
+    const Eigen::Vector3f & source_point,
+    Eigen::Vector3f * target_point)
+  {
+    if (target_point == nullptr) {
+      return false;
+    }
+    if (target_frame_ == source_header.frame_id || target_frame_.empty()) {
+      *target_point = source_point;
+      return true;
+    }
+
+    try {
+      const auto transform = tf_buffer_.lookupTransform(
+        target_frame_, source_header.frame_id, source_header.stamp, 100ms);
+      geometry_msgs::msg::PointStamped source;
+      source.header = source_header;
+      source.point.x = source_point.x();
+      source.point.y = source_point.y();
+      source.point.z = source_point.z();
+
+      geometry_msgs::msg::PointStamped target;
+      tf2::doTransform(source, target, transform);
+      *target_point = Eigen::Vector3f(target.point.x, target.point.y, target.point.z);
+      return true;
+    } catch (const tf2::TransformException &) {
+      return false;
+    }
+  }
+
   void publish_overlay(
     const cv::Mat & image,
     const std::vector<Candidate> & candidates,
@@ -1417,6 +1834,7 @@ private:
   std::string debug_rejection_topic_;
   std::string debug_depth_alignment_topic_;
   std::string debug_depth_validity_topic_;
+  std::string debug_leak_overlay_topic_;
   double publish_hz_{2.0};
   uint32_t sync_queue_size_{5};
   double sync_slop_s_{0.08};
@@ -1424,6 +1842,7 @@ private:
   int accept_threshold_{4};
   double dedup_distance_m_{0.45};
   double republish_move_threshold_m_{0.05};
+  double republish_rotation_threshold_rad_{0.1};
   int track_timeout_frames_{18};
   double max_barrel_height_m_{0.70};
   double depth_min_m_{0.15};
@@ -1469,6 +1888,21 @@ private:
   bool enable_debug_rejection_log_{true};
   bool enable_debug_depth_alignment_{true};
   bool enable_debug_depth_validity_{true};
+  bool enable_debug_leak_overlay_{true};
+  int leak_search_padding_px_{60};
+  int leak_ransac_inlier_dilate_px_{9};
+  double leak_min_area_px_{80.0};
+  double leak_max_area_px_{20000.0};
+  int leak_min_points_{15};
+  double leak_min_height_m_{0.005};
+  double leak_max_height_m_{0.08};
+  double leak_all_points_max_source_z_m_{-0.21};
+  double leak_reject_all_points_below_source_z_m_{-0.24};
+  double leak_max_thickness_m_{0.035};
+  double leak_max_distance_from_barrel_m_{0.85};
+  bool leak_horizontal_barrels_only_{true};
+  int leak_confirm_threshold_{3};
+  int leak_clear_threshold_{3};
   int debug_depth_alignment_search_px_{50};
   int debug_depth_alignment_step_px_{5};
   std::string debug_window_name_{"barrel"};
@@ -1476,6 +1910,7 @@ private:
   std::string debug_rejection_window_name_{"barrel_rejections"};
   std::string debug_depth_alignment_window_name_{"barrel_depth_alignment"};
   std::string debug_depth_validity_window_name_{"barrel_depth_validity"};
+  std::string debug_leak_window_name_{"barrel_leak"};
   bool show_debug_window_{false};
   bool draw_barrel_outline_{true};
   bool draw_blob_metrics_{true};
@@ -1497,6 +1932,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_rejection_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_alignment_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_validity_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_leak_pub_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 };
 
