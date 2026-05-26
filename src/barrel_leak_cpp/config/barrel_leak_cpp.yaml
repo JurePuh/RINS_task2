@@ -1,0 +1,82 @@
+detect_barrel_leak_cpp:
+  ros__parameters:
+    image_topic: /oakd/rgb/preview/image_raw
+    point_cloud_topic: /oakd/rgb/preview/depth/points
+    target_frame: map
+
+    barrel_topic: /barrel_detect
+    marker_topic: /barrel_markers
+    leak_topic: /barrel_leak_warning
+    debug_overlay_topic: /barrel_leak/debug_overlay
+
+    publish_hz: 2.0
+    sync_queue_size: 5
+    sync_slop_s: 0.08
+    first_track_id: 100
+    accept_threshold: 4
+    dedup_distance_m: 0.45
+    track_timeout_frames: 18
+
+    depth_min_m: 0.15
+    depth_max_m: 6.0
+    cluster_tolerance_m: 0.07
+    cluster_min_points: 40
+    cluster_max_points: 20000
+    normal_search_radius_m: 0.05
+    ransac_max_iterations: 250
+    ransac_distance_threshold_m: 0.035
+    ransac_normal_distance_weight: 0.1
+    cylinder_radius_min_m: 0.08
+    cylinder_radius_max_m: 0.45
+    cylinder_inlier_min: 35
+    cylinder_fit_residual_max_m: 0.05
+    horizontal_dot_threshold: 0.55
+
+    use_color_prefilter: true
+    candidate_min_area_px: 180.0
+    candidate_max_area_px: 90000.0
+    candidate_min_width_px: 12
+    candidate_min_height_px: 12
+    color_confidence_min: 0.45
+    mask_morph_open_kernel: 3
+    mask_morph_close_kernel: 9
+    allow_gray_fallback_label: false
+    gray_saturation_max: 35
+
+    hsv_ranges.red: [0, 90, 40, 10, 255, 255, 160, 90, 40, 179, 255, 255]
+    hsv_ranges.green: [35, 70, 35, 90, 255, 255]
+    hsv_ranges.blue: [90, 60, 35, 140, 255, 255]
+    hsv_ranges.yellow: [16, 80, 50, 35, 255, 255]
+
+    enable_leak_detection: true
+    enable_leak_roi_restriction: true
+    roi_width_scale: 1.35
+    roi_height_scale: 0.75
+    roi_y_offset_scale: 0.15
+    floor_height_max_m: 0.18
+    floor_contact_tol_m: 0.08
+    leak_hsv_ranges.green: [35, 70, 35, 90, 255, 255]
+    blob_area_min_px: 35.0
+    blob_area_max_px: 15000.0
+    blob_circularity_min: 0.12
+    blob_elongation_max: 5.0
+    opening_distance_max_px_or_m: 120.0
+    axis_alignment_min: 0.25
+    stability_window_m: 8
+    stability_required_n: 5
+    leak_clear_required_n: 3
+    alert_cooldown_s: 10.0
+
+    marker_scale_x: 0.28
+    marker_scale_y: 0.28
+    marker_scale_z: 0.45
+    marker_alpha: 0.9
+    marker_lifetime_s: 1.5
+    marker_namespace: barrels
+
+    enable_debug_overlay: true
+    draw_roi: true
+    draw_barrel_outline: true
+    draw_leak_outline: true
+    draw_blob_metrics: true
+    draw_track_ids: true
