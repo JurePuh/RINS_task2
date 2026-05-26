@@ -5,7 +5,6 @@
 #include <deque>
 #include <limits>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -21,7 +20,6 @@
 #include <opencv2/imgproc.hpp>
 #include <pcl/common/common.h>
 #include <pcl/features/normal_3d.h>
-#include <pcl/filters/extract_indices.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/search/kdtree.h>
@@ -292,7 +290,6 @@ private:
     declare_parameter("cylinder_fit_residual_max_m", 0.05);
     declare_parameter("vertical_dot_threshold", 0.75);
     declare_parameter("horizontal_dot_threshold", 0.35);
-    declare_parameter("use_color_prefilter", true);
     declare_parameter("candidate_min_area_px", 180.0);
     declare_parameter("candidate_max_area_px", 90000.0);
     declare_parameter("candidate_min_width_px", 12);
@@ -300,10 +297,7 @@ private:
     declare_parameter("color_confidence_min", 0.45);
     declare_parameter("mask_morph_open_kernel", 3);
     declare_parameter("mask_morph_close_kernel", 9);
-    declare_parameter("allow_gray_fallback_label", false);
-    declare_parameter("gray_saturation_max", 35);
     declare_parameter("stability_window_m", 8);
-    declare_parameter("stability_required_n", 5);
     declare_parameter("marker_scale_x", 0.28);
     declare_parameter("marker_scale_y", 0.28);
     declare_parameter("marker_scale_z", 0.45);
@@ -410,7 +404,6 @@ private:
     mask_morph_open_kernel_ = static_cast<int>(get_parameter("mask_morph_open_kernel").as_int());
     mask_morph_close_kernel_ = static_cast<int>(get_parameter("mask_morph_close_kernel").as_int());
     stability_window_m_ = static_cast<size_t>(get_parameter("stability_window_m").as_int());
-    stability_required_n_ = static_cast<int>(get_parameter("stability_required_n").as_int());
     marker_scale_x_ = get_parameter("marker_scale_x").as_double();
     marker_scale_y_ = get_parameter("marker_scale_y").as_double();
     marker_scale_z_ = get_parameter("marker_scale_z").as_double();
@@ -1247,22 +1240,6 @@ private:
     return std::acos(dot);
   }
 
-  const BarrelTrack * matching_track_for_candidate(const Candidate & candidate) const
-  {
-    const BarrelTrack * best_track = nullptr;
-    double best_dist = std::numeric_limits<double>::max();
-    for (const auto & track : tracks_) {
-      const double dx = track.x - candidate.centroid_map.x();
-      const double dy = track.y - candidate.centroid_map.y();
-      const double dist = std::hypot(dx, dy);
-      if (dist < best_dist && dist <= dedup_distance_m_) {
-        best_dist = dist;
-        best_track = &track;
-      }
-    }
-    return best_track;
-  }
-
   int matching_track_index_for_candidate(const Candidate & candidate) const
   {
     int best_idx = -1;
@@ -1771,7 +1748,8 @@ private:
     cv::Mat overlay = image.clone();
     for (const auto & candidate : candidates) {
       const auto color = draw_color(candidate.color);
-      const BarrelTrack * track = matching_track_for_candidate(candidate);
+      const int track_idx = matching_track_index_for_candidate(candidate);
+      const BarrelTrack * track = track_idx >= 0 ? &tracks_[static_cast<size_t>(track_idx)] : nullptr;
       const bool accepted = track != nullptr && track->accepted;
       const int thickness = accepted ? 3 : 1;
       if (draw_barrel_outline_) {
@@ -1875,7 +1853,6 @@ private:
   int mask_morph_open_kernel_{3};
   int mask_morph_close_kernel_{9};
   size_t stability_window_m_{8};
-  int stability_required_n_{5};
   double marker_scale_x_{0.28};
   double marker_scale_y_{0.28};
   double marker_scale_z_{0.45};

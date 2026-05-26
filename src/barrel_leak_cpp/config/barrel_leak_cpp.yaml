@@ -17,7 +17,7 @@ detect_barrel_cpp:
     sync_queue_size: 5
     sync_slop_s: 0.08
     first_track_id: 100
-    accept_threshold: 4
+    accept_threshold: 10
     dedup_distance_m: 0.45
     republish_move_threshold_m: 0.05
     republish_rotation_threshold_rad: 0.1
@@ -52,7 +52,6 @@ detect_barrel_cpp:
     vertical_dot_threshold: 0.75
     horizontal_dot_threshold: 0.35
 
-    use_color_prefilter: true
     candidate_min_area_px: 180.0
     candidate_max_area_px: 90000.0
     candidate_min_width_px: 12
@@ -64,9 +63,6 @@ detect_barrel_cpp:
 
     mask_morph_close_kernel: 3 #9
 
-    allow_gray_fallback_label: false
-    gray_saturation_max: 35
-
     hsv_ranges.red: [0, 90, 40, 10, 255, 255, 160, 90, 40, 179, 255, 255]
     hsv_ranges.green: [35, 70, 35, 90, 255, 255]
     hsv_ranges.blue: [90, 60, 35, 140, 255, 255]
@@ -77,7 +73,6 @@ detect_barrel_cpp:
     hsv_ranges.black: [0, 0, 0, 179, 255, 55]
 
     stability_window_m: 8
-    stability_required_n: 5
 
     marker_scale_x: 0.28
     marker_scale_y: 0.28
