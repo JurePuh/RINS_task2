@@ -4,6 +4,8 @@ import re
 import string
 from dataclasses import dataclass
 
+from task2.conversation.homophones import repair_homophones
+
 
 TASK_ANOMALY_RED = "anomaly_red"
 TASK_ANOMALY_GREEN = "anomaly_green"
@@ -54,6 +56,7 @@ _RING_PATTERN = re.compile(r"\b(ring|rings)\b")
 def normalize_transcript(text: str) -> str:
     text = text.lower().translate(_PUNCT_TRANSLATION)
     text = " ".join(text.split())
+    text = repair_homophones(text)
     text = _repair_common_stt_compactions(text)
     return " ".join(text.split())
 
