@@ -17,7 +17,8 @@ detect_barrel_cpp:
     sync_queue_size: 5
     sync_slop_s: 0.08
     first_track_id: 100
-    accept_threshold: 20
+    accept_threshold: 10
+    candidate_max_distance_m: 10.0
     dedup_distance_m: 0.40
     dedup_distance_m.black: 3.0
     dedup_distance_m.red: 2.0
