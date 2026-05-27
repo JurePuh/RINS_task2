@@ -256,7 +256,10 @@ def build() -> py_trees.composites.Sequence:
     seq.add_children([
         ComputeBarrelDestination(),
         drive_or_recompute,
-        TurnTowardsBarrel(),
+        py_trees.decorators.FailureIsSuccess(
+            name="TurnTowardsBarrelTolerant",
+            child=TurnTowardsBarrel(),
+        ),
         CheckBarrelLeak(),
         alert_if_leaking,
         ClearActiveBarrel(),
