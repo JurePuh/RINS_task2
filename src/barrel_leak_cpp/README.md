@@ -1,9 +1,12 @@
-
+## Run
 ```bash
 ros2 run barrel_leak_cpp detect_barrel_cpp
 ```
 
-## Run With The Config File
+This already loads the default config from:
+`share/barrel_leak_cpp/config/barrel_leak_cpp.yaml`.
+
+## Run With A Custom Config File
 
 Build + run: 
 
@@ -24,11 +27,17 @@ ros2 run barrel_leak_cpp detect_barrel_cpp --ros-args \
 ## Debug Mode
 
 The node always publishes debug image topics when the `enable_debug_*`
-parameters are true. To also open local OpenCV windows, set:
+parameters are true.
+
+OpenCV windows in non-debug mode (`show_debug_window:=false`):
+
+- `barrel`
+- `barrel_leak`
+
+To open all debug windows, set:
 
 ```bash
 ros2 run barrel_leak_cpp detect_barrel_cpp --ros-args \
-  --params-file src/barrel_leak_cpp/config/barrel_leak_cpp.yaml \
   -p show_debug_window:=true
 ```
 
@@ -40,7 +49,7 @@ Useful debug parameters:
 - `enable_debug_depth_alignment`: publish/open RGB/depth alignment hints.
 - `enable_debug_depth_validity`: publish/open finite-depth coverage.
 - `enable_debug_leak_overlay`: publish/open leak search and leak candidates.
-- `show_debug_window`: open local OpenCV windows in addition to publishing topics.
+- `show_debug_window`: when `true`, opens all debug windows; when `false`, only `barrel` and `barrel_leak` windows are shown.
 
 Debug windows:
 
