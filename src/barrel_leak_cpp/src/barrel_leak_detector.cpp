@@ -263,10 +263,10 @@ private:
     declare_parameter("sync_slop_s", 0.08);
     declare_parameter("first_track_id", 100);
     declare_parameter("accept_threshold", 4);
-    declare_parameter("dedup_distance_m", 0.45);
+    declare_parameter("dedup_distance_m", 2.0);
     declare_parameter("republish_move_threshold_m", 0.05);
     declare_parameter("republish_rotation_threshold_rad", 0.1);
-    declare_parameter("track_timeout_frames", 18);
+    declare_parameter("track_timeout_frames", 150);
     declare_parameter("max_barrel_height_m", 0.70);
     declare_parameter("depth_min_m", 0.15);
     declare_parameter("depth_max_m", 6.0);
@@ -1116,7 +1116,9 @@ private:
         const double dx = tracks_[i].x - candidate.centroid_map.x();
         const double dy = tracks_[i].y - candidate.centroid_map.y();
         const double dist = std::hypot(dx, dy);
-        if (dist < best_dist && dist <= dedup_distance_m_) {
+        if (track_matches_candidate_color(tracks_[i], candidate) &&
+          dist < best_dist && dist <= dedup_distance_m_)
+        {
           best_dist = dist;
           best_idx = static_cast<int>(i);
         }
@@ -1154,7 +1156,9 @@ private:
     tracks_.erase(
       std::remove_if(
         tracks_.begin(), tracks_.end(),
-        [this](const BarrelTrack & track) { return track.missed_frames > track_timeout_frames_; }),
+        [this](const BarrelTrack & track) {
+          return !track.published && track.missed_frames > track_timeout_frames_;
+        }),
       tracks_.end());
   }
 
@@ -1248,12 +1252,20 @@ private:
       const double dx = tracks_[i].x - candidate.centroid_map.x();
       const double dy = tracks_[i].y - candidate.centroid_map.y();
       const double dist = std::hypot(dx, dy);
-      if (dist < best_dist && dist <= dedup_distance_m_) {
+      if (track_matches_candidate_color(tracks_[i], candidate) &&
+        dist < best_dist && dist <= dedup_distance_m_)
+      {
         best_dist = dist;
         best_idx = static_cast<int>(i);
       }
     }
     return best_idx;
+  }
+
+  static bool track_matches_candidate_color(const BarrelTrack & track, const Candidate & candidate)
+  {
+    const std::string track_color = track.color();
+    return track_color == "unknown" || track_color == candidate.color;
   }
 
   void update_track_leak_state(BarrelTrack & track, bool leak_detected)
@@ -1818,10 +1830,10 @@ private:
   double sync_slop_s_{0.08};
   int next_track_id_{100};
   int accept_threshold_{4};
-  double dedup_distance_m_{0.45};
+  double dedup_distance_m_{2.0};
   double republish_move_threshold_m_{0.05};
   double republish_rotation_threshold_rad_{0.1};
-  int track_timeout_frames_{18};
+  int track_timeout_frames_{150};
   double max_barrel_height_m_{0.70};
   double depth_min_m_{0.15};
   double depth_max_m_{6.0};

@@ -83,6 +83,11 @@ Tracks are accepted after `accept_threshold` supporting frames. Accepted tracks
 publish `BarrelDetect` with position, color, horizontal state, orientation
 normal, and leak status. A track republishes only when it first appears, moves
 far enough, changes orientation, changes color, or changes leak state.
+Detections are associated to an existing track only when the detected color
+matches the track color and the XY map distance is within `dedup_distance_m`.
+Never-published tentative tracks are removed after `track_timeout_frames` missed
+camera callbacks. Tracks that have already published on `/barrel_detect` are
+kept so later observations can reconnect to the same id.
 
 ## Leak Detection Flow
 
@@ -93,4 +98,3 @@ pixels and 3D points, be close enough to the barrel, sit inside the configured
 height/source-Z bands, and be thin enough to look like a flat spill. Accepted
 leak blobs update the track's `BarrelDetect.leaking` boolean after the
 configured confirmation threshold, and clear it after the clear threshold.
-
