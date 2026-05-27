@@ -272,6 +272,11 @@ private:
     declare_parameter("first_track_id", 100);
     declare_parameter("accept_threshold", 4);
     declare_parameter("dedup_distance_m", 2.0);
+    declare_parameter("dedup_distance_m.black", 5.0);
+    declare_parameter("dedup_distance_m.red", 3.0);
+    declare_parameter("dedup_distance_m.green", 0.4);
+    declare_parameter("dedup_distance_m.yellow", 5.0);
+    declare_parameter("dedup_distance_m.blue", 5.0);
     declare_parameter("republish_move_threshold_m", 0.05);
     declare_parameter("republish_rotation_threshold_rad", 0.1);
     declare_parameter("track_timeout_frames", 150);
@@ -381,6 +386,11 @@ private:
     next_track_id_ = static_cast<int>(get_parameter("first_track_id").as_int());
     accept_threshold_ = static_cast<int>(get_parameter("accept_threshold").as_int());
     dedup_distance_m_ = get_parameter("dedup_distance_m").as_double();
+    dedup_distance_black_m_ = get_parameter("dedup_distance_m.black").as_double();
+    dedup_distance_red_m_ = get_parameter("dedup_distance_m.red").as_double();
+    dedup_distance_green_m_ = get_parameter("dedup_distance_m.green").as_double();
+    dedup_distance_yellow_m_ = get_parameter("dedup_distance_m.yellow").as_double();
+    dedup_distance_blue_m_ = get_parameter("dedup_distance_m.blue").as_double();
     republish_move_threshold_m_ = get_parameter("republish_move_threshold_m").as_double();
     republish_rotation_threshold_rad_ = get_parameter("republish_rotation_threshold_rad").as_double();
     track_timeout_frames_ = static_cast<int>(get_parameter("track_timeout_frames").as_int());
@@ -1156,18 +1166,39 @@ private:
     return true;
   }
 
+  double dedup_distance_for_color(const std::string & color) const
+  {
+    if (color == "black") {
+      return dedup_distance_black_m_;
+    }
+    if (color == "red") {
+      return dedup_distance_red_m_;
+    }
+    if (color == "green") {
+      return dedup_distance_green_m_;
+    }
+    if (color == "yellow") {
+      return dedup_distance_yellow_m_;
+    }
+    if (color == "blue") {
+      return dedup_distance_blue_m_;
+    }
+    return dedup_distance_m_;
+  }
+
   void update_tracks(const std::vector<Candidate> & candidates)
   {
     std::vector<bool> matched(tracks_.size(), false);
     for (const auto & candidate : candidates) {
       int best_idx = -1;
       double best_dist = std::numeric_limits<double>::max();
+      const double dedup_distance_for_candidate = dedup_distance_for_color(candidate.color);
       for (size_t i = 0; i < tracks_.size(); ++i) {
         const double dx = tracks_[i].x - candidate.centroid_map.x();
         const double dy = tracks_[i].y - candidate.centroid_map.y();
         const double dist = std::hypot(dx, dy);
         if (track_matches_candidate_color(tracks_[i], candidate) &&
-          dist < best_dist && dist <= dedup_distance_m_)
+          dist < best_dist && dist <= dedup_distance_for_candidate)
         {
           best_dist = dist;
           best_idx = static_cast<int>(i);
@@ -1298,12 +1329,13 @@ private:
   {
     int best_idx = -1;
     double best_dist = std::numeric_limits<double>::max();
+    const double dedup_distance_for_candidate = dedup_distance_for_color(candidate.color);
     for (size_t i = 0; i < tracks_.size(); ++i) {
       const double dx = tracks_[i].x - candidate.centroid_map.x();
       const double dy = tracks_[i].y - candidate.centroid_map.y();
       const double dist = std::hypot(dx, dy);
       if (track_matches_candidate_color(tracks_[i], candidate) &&
-        dist < best_dist && dist <= dedup_distance_m_)
+        dist < best_dist && dist <= dedup_distance_for_candidate)
       {
         best_dist = dist;
         best_idx = static_cast<int>(i);
@@ -1957,6 +1989,11 @@ private:
   int next_track_id_{100};
   int accept_threshold_{4};
   double dedup_distance_m_{2.0};
+  double dedup_distance_black_m_{5.0};
+  double dedup_distance_red_m_{3.0};
+  double dedup_distance_green_m_{0.4};
+  double dedup_distance_yellow_m_{5.0};
+  double dedup_distance_blue_m_{5.0};
   double republish_move_threshold_m_{0.05};
   double republish_rotation_threshold_rad_{0.1};
   int track_timeout_frames_{150};

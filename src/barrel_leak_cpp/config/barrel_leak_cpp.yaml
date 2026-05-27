@@ -19,6 +19,11 @@ detect_barrel_cpp:
     first_track_id: 100
     accept_threshold: 20
     dedup_distance_m: 0.40
+    dedup_distance_m.black: 3.0
+    dedup_distance_m.red: 2.0
+    dedup_distance_m.green: 0.4
+    dedup_distance_m.yellow: 5.0
+    dedup_distance_m.blue: 5.0
     republish_move_threshold_m: 0.05
     republish_rotation_threshold_rad: 0.1
     track_timeout_frames: 150
