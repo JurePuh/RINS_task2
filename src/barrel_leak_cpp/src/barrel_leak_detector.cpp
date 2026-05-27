@@ -346,9 +346,17 @@ private:
     declare_parameter("leak_source_z_min_m", -0.24);
     declare_parameter("leak_source_z_max_m", -0.21);
     declare_parameter("leak_source_z_inlier_ratio_min", 0.85);
+    declare_parameter("leak_min_ellipse_size_m", 0.20);
     declare_parameter("leak_max_thickness_m", 0.035);
     declare_parameter("leak_max_distance_from_barrel_m", 0.85);
     declare_parameter("leak_horizontal_barrels_only", true);
+    declare_parameter("leak_vertical_depth_filter_enabled", true);
+    declare_parameter("leak_vertical_filter_remove_top_ratio", 0.35);
+    declare_parameter("leak_vertical_depth_trend_threshold_m", 0.03);
+    declare_parameter("leak_vertical_depth_window_px", 3);
+    declare_parameter("leak_vertical_min_depth_samples", 4);
+    declare_parameter("leak_vertical_keep_uncertain_columns", false);
+    declare_parameter("leak_vertical_filtered_min_area_px", 30.0);
     declare_parameter("leak_confirm_threshold", 3);
     declare_parameter("leak_clear_threshold", 3);
     declare_parameter("debug_depth_alignment_search_px", 50);
@@ -471,9 +479,24 @@ private:
     leak_source_z_max_m_ = get_parameter("leak_source_z_max_m").as_double();
     leak_source_z_inlier_ratio_min_ =
       get_parameter("leak_source_z_inlier_ratio_min").as_double();
+    leak_min_ellipse_size_m_ = get_parameter("leak_min_ellipse_size_m").as_double();
     leak_max_thickness_m_ = get_parameter("leak_max_thickness_m").as_double();
     leak_max_distance_from_barrel_m_ = get_parameter("leak_max_distance_from_barrel_m").as_double();
     leak_horizontal_barrels_only_ = get_parameter("leak_horizontal_barrels_only").as_bool();
+    leak_vertical_depth_filter_enabled_ =
+      get_parameter("leak_vertical_depth_filter_enabled").as_bool();
+    leak_vertical_filter_remove_top_ratio_ =
+      get_parameter("leak_vertical_filter_remove_top_ratio").as_double();
+    leak_vertical_depth_trend_threshold_m_ =
+      get_parameter("leak_vertical_depth_trend_threshold_m").as_double();
+    leak_vertical_depth_window_px_ =
+      std::max(1, static_cast<int>(get_parameter("leak_vertical_depth_window_px").as_int()));
+    leak_vertical_min_depth_samples_ =
+      std::max(2, static_cast<int>(get_parameter("leak_vertical_min_depth_samples").as_int()));
+    leak_vertical_keep_uncertain_columns_ =
+      get_parameter("leak_vertical_keep_uncertain_columns").as_bool();
+    leak_vertical_filtered_min_area_px_ =
+      get_parameter("leak_vertical_filtered_min_area_px").as_double();
     leak_confirm_threshold_ =
       std::max(1, static_cast<int>(get_parameter("leak_confirm_threshold").as_int()));
     leak_clear_threshold_ =
@@ -1712,7 +1735,16 @@ private:
         cv::Mat leak_mask = build_mask(
           hsv, ranges, leak_mask_morph_open_kernel_, leak_mask_morph_close_kernel_, true);
         cv::bitwise_and(leak_mask, leak_source_z_mask, leak_mask);
+        if (leak_vertical_depth_filter_enabled_) {
+          remove_upper_barrel_from_leak_mask(barrel, leak_mask);
+          leak_mask = filter_leak_mask_by_vertical_depth_trend(leak_mask, search, organized);
+        }
         cv::Mat roi_mask = leak_mask(search).clone();
+        if (leak_vertical_depth_filter_enabled_ &&
+          cv::countNonZero(roi_mask) < leak_vertical_filtered_min_area_px_)
+        {
+          continue;
+        }
 
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(roi_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -1786,6 +1818,128 @@ private:
 
     cv::imshow(debug_leak_window_name_, overlay);
     cv::waitKey(1);
+  }
+
+  void remove_upper_barrel_from_leak_mask(
+    const Candidate & barrel,
+    cv::Mat & leak_mask) const
+  {
+    if (leak_mask.empty() || leak_vertical_filter_remove_top_ratio_ <= 0.0) {
+      return;
+    }
+
+    const cv::Rect image_rect(0, 0, leak_mask.cols, leak_mask.rows);
+    cv::Rect upper = barrel.bbox & image_rect;
+    if (upper.area() <= 0) {
+      return;
+    }
+
+    const double clamped_ratio = std::clamp(leak_vertical_filter_remove_top_ratio_, 0.0, 1.0);
+    upper.height = static_cast<int>(std::round(upper.height * clamped_ratio));
+    if (upper.height > 0) {
+      leak_mask(upper).setTo(0);
+    }
+  }
+
+  cv::Mat filter_leak_mask_by_vertical_depth_trend(
+    const cv::Mat & leak_mask,
+    const cv::Rect & search,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized) const
+  {
+    cv::Mat filtered = cv::Mat::zeros(leak_mask.size(), leak_mask.type());
+    if (leak_mask.empty() || leak_mask.type() != CV_8UC1 || organized == nullptr) {
+      return filtered;
+    }
+
+    const cv::Rect image_rect(
+      0, 0,
+      std::min(leak_mask.cols, static_cast<int>(organized->width)),
+      std::min(leak_mask.rows, static_cast<int>(organized->height)));
+    const cv::Rect roi = search & image_rect;
+    if (roi.area() <= 0) {
+      return filtered;
+    }
+
+    for (int x = roi.x; x < roi.x + roi.width; ++x) {
+      std::vector<std::pair<int, double>> samples;
+      samples.reserve(static_cast<size_t>(roi.height));
+      for (int y = roi.y; y < roi.y + roi.height; ++y) {
+        if (leak_mask.at<uint8_t>(y, x) == 0) {
+          continue;
+        }
+        const auto & point = organized->at(x, y);
+        if (!pcl::isFinite(point)) {
+          continue;
+        }
+        const double distance = std::sqrt(
+          static_cast<double>(point.x) * static_cast<double>(point.x) +
+          static_cast<double>(point.y) * static_cast<double>(point.y) +
+          static_cast<double>(point.z) * static_cast<double>(point.z));
+        if (std::isfinite(distance)) {
+          samples.emplace_back(y, distance);
+        }
+      }
+
+      const bool keep_column = vertical_depth_samples_indicate_leak(samples);
+      if (!keep_column) {
+        continue;
+      }
+
+      for (int y = roi.y; y < roi.y + roi.height; ++y) {
+        if (leak_mask.at<uint8_t>(y, x) != 0) {
+          filtered.at<uint8_t>(y, x) = 255;
+        }
+      }
+    }
+
+    if (leak_mask_morph_open_kernel_ > 1) {
+      const int k = odd_kernel(leak_mask_morph_open_kernel_);
+      const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {k, k});
+      cv::morphologyEx(filtered, filtered, cv::MORPH_OPEN, kernel);
+    }
+    if (leak_mask_morph_close_kernel_ > 1) {
+      const int k = odd_kernel(leak_mask_morph_close_kernel_);
+      const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {k, k});
+      cv::morphologyEx(filtered, filtered, cv::MORPH_CLOSE, kernel);
+    }
+
+    return filtered;
+  }
+
+  bool vertical_depth_samples_indicate_leak(
+    std::vector<std::pair<int, double>> samples) const
+  {
+    if (static_cast<int>(samples.size()) < leak_vertical_min_depth_samples_) {
+      return leak_vertical_keep_uncertain_columns_;
+    }
+
+    std::sort(
+      samples.begin(), samples.end(),
+      [](const auto & a, const auto & b) { return a.first < b.first; });
+
+    const int window = std::min(
+      leak_vertical_depth_window_px_, static_cast<int>(samples.size()) / 2);
+    if (window <= 0) {
+      return leak_vertical_keep_uncertain_columns_;
+    }
+
+    double top_sum = 0.0;
+    double bottom_sum = 0.0;
+    for (int i = 0; i < window; ++i) {
+      top_sum += samples[static_cast<size_t>(i)].second;
+      bottom_sum += samples[samples.size() - 1U - static_cast<size_t>(i)].second;
+    }
+
+    const double top_distance = top_sum / static_cast<double>(window);
+    const double bottom_distance = bottom_sum / static_cast<double>(window);
+    const double trend = top_distance - bottom_distance;
+    if (trend > leak_vertical_depth_trend_threshold_m_) {
+      return true;
+    }
+    if (trend < -leak_vertical_depth_trend_threshold_m_) {
+      return false;
+    }
+    return leak_vertical_keep_uncertain_columns_;
   }
 
   cv::Mat build_leak_source_z_mask(
@@ -1958,6 +2112,10 @@ private:
       std::abs(max_pt.y() - min_pt.y()),
       std::abs(max_pt.z() - min_pt.z())};
     std::sort(extents.begin(), extents.end());
+    if (leak_min_ellipse_size_m_ > 0.0 && extents[2] < leak_min_ellipse_size_m_) {
+      leak.reason = "esize";
+      return;
+    }
     leak.thickness_m = extents[0];
     if (leak.thickness_m > leak_max_thickness_m_) {
       leak.reason = "thick";
@@ -2148,9 +2306,17 @@ private:
   double leak_source_z_min_m_{-0.24};
   double leak_source_z_max_m_{-0.21};
   double leak_source_z_inlier_ratio_min_{0.85};
+  double leak_min_ellipse_size_m_{0.20};
   double leak_max_thickness_m_{0.035};
   double leak_max_distance_from_barrel_m_{0.85};
   bool leak_horizontal_barrels_only_{true};
+  bool leak_vertical_depth_filter_enabled_{true};
+  double leak_vertical_filter_remove_top_ratio_{0.35};
+  double leak_vertical_depth_trend_threshold_m_{0.03};
+  int leak_vertical_depth_window_px_{3};
+  int leak_vertical_min_depth_samples_{4};
+  bool leak_vertical_keep_uncertain_columns_{false};
+  double leak_vertical_filtered_min_area_px_{30.0};
   int leak_confirm_threshold_{3};
   int leak_clear_threshold_{3};
   int debug_depth_alignment_search_px_{50};
