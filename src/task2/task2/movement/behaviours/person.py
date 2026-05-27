@@ -30,7 +30,7 @@ from task2.movement.models import Gender, Person, Pose, Point, Vector
 
 
 # If True, ConversePerson calls the /converse_person service; if False, uses the stub list below.
-_USE_CONVERSATION_PERSON: bool = False
+_USE_CONVERSATION_PERSON: bool = True
 
 # Stub: i-th person we converse with returns the i-th task string.
 _STUB_CONVERSATION_RESULTS = ["anomaly_red", "count_rings", "inspect_barrels"]

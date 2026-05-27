@@ -11,7 +11,10 @@ sudo apt install -y \
     libportaudio2 \
     portaudio19-dev \
     ros-jazzy-py-trees \
-    ros-jazzy-py-trees-ros
+    ros-jazzy-py-trees-ros \
+    ros-jazzy-pcl-conversions \
+    ros-jazzy-pcl-ros \
+    libpcl-dev
 ```
 
 - `libportaudio2` + `portaudio19-dev` + `espeak-ng` are needed for the conversation/speak nodes (microphone + TTS).
