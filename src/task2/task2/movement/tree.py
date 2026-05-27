@@ -31,7 +31,6 @@ def _seed_blackboard() -> None:
         bb.PENDING_BARRELS, bb.BARREL_ACTIVE, bb.HANDLED_BARRELS,
         bb.BARREL_DESTINATION, bb.RECOMPUTE_BARREL_DESTINATION,
         bb.ANOMALY_RED_ACTIVE, bb.ANOMALY_GREEN_ACTIVE,
-        bb.ROOM1_DONE,
     ]
     for k in keys:
         w.register_key(key=k, access=py_trees.common.Access.WRITE)
@@ -52,7 +51,6 @@ def _seed_blackboard() -> None:
     w.set(bb.BARREL_ACTIVE, None) # None
     w.set(bb.ANOMALY_RED_ACTIVE, False) # False
     w.set(bb.ANOMALY_GREEN_ACTIVE, False) # False
-    w.set(bb.ROOM1_DONE, False)
 
 
 def build_root() -> py_trees.behaviour.Behaviour:
@@ -128,11 +126,8 @@ def attach_ring_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     logger = node.get_logger()
     reader = py_trees.blackboard.Client(name="ring_subscription")
     reader.register_key(key=bb.TASK_COUNT_RINGS, access=py_trees.common.Access.READ)
-    reader.register_key(key=bb.ROOM1_DONE, access=py_trees.common.Access.READ)
 
     def on_ring(msg: RingDetect) -> None:
-        if reader.get(bb.ROOM1_DONE):
-            return
         task = reader.get(bb.TASK_COUNT_RINGS)
         rid = msg.id
         viz.update_ring(rid, msg.x, msg.y, msg.color)
@@ -168,11 +163,8 @@ def attach_barrel_subscription(node: rclpy.node.Node, viz: Visualizer) -> None:
     reader.register_key(key=bb.PENDING_BARRELS, access=py_trees.common.Access.READ)
     reader.register_key(key=bb.HANDLED_BARRELS, access=py_trees.common.Access.READ)
     reader.register_key(key=bb.RECOMPUTE_BARREL_DESTINATION, access=py_trees.common.Access.WRITE)
-    reader.register_key(key=bb.ROOM1_DONE, access=py_trees.common.Access.READ)
 
     def on_barrel(msg: BarrelDetect) -> None:
-        if reader.get(bb.ROOM1_DONE):
-            return
         task = reader.get(bb.TASK_INSPECT_BARRELS)
         queue = reader.get(bb.PENDING_BARRELS)
         handled = reader.get(bb.HANDLED_BARRELS)

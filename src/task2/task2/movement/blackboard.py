@@ -2,9 +2,6 @@
 py_trees prefixes keys with '/' to namespace them; we follow that convention.
 """
 
-# --- Phase ----------------------------------------------------------------
-ROOM1_DONE = "/room1_done"  # True once room 1 is complete; gates ring/barrel detection callbacks.
-
 # --- Faces --------------------------------------------------------
 PENDING_PEOPLE = "/pending_people" # deque[Person] of newly-seen people that still need talking to.
 HANDLED_PEOPLE = "/handled_people" # set[str] of people we've already talked to.
