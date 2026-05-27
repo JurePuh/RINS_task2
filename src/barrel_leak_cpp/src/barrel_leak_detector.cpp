@@ -277,6 +277,11 @@ private:
     declare_parameter("dedup_distance_m.green", 0.4);
     declare_parameter("dedup_distance_m.yellow", 5.0);
     declare_parameter("dedup_distance_m.blue", 5.0);
+    declare_parameter("max_confirmed_tracks.black", 2);
+    declare_parameter("max_confirmed_tracks.red", 2);
+    declare_parameter("max_confirmed_tracks.green", 5);
+    declare_parameter("max_confirmed_tracks.yellow", 1);
+    declare_parameter("max_confirmed_tracks.blue", 1);
     declare_parameter("republish_move_threshold_m", 0.05);
     declare_parameter("republish_rotation_threshold_rad", 0.1);
     declare_parameter("track_timeout_frames", 150);
@@ -391,6 +396,11 @@ private:
     dedup_distance_green_m_ = get_parameter("dedup_distance_m.green").as_double();
     dedup_distance_yellow_m_ = get_parameter("dedup_distance_m.yellow").as_double();
     dedup_distance_blue_m_ = get_parameter("dedup_distance_m.blue").as_double();
+    max_confirmed_black_ = static_cast<int>(get_parameter("max_confirmed_tracks.black").as_int());
+    max_confirmed_red_ = static_cast<int>(get_parameter("max_confirmed_tracks.red").as_int());
+    max_confirmed_green_ = static_cast<int>(get_parameter("max_confirmed_tracks.green").as_int());
+    max_confirmed_yellow_ = static_cast<int>(get_parameter("max_confirmed_tracks.yellow").as_int());
+    max_confirmed_blue_ = static_cast<int>(get_parameter("max_confirmed_tracks.blue").as_int());
     republish_move_threshold_m_ = get_parameter("republish_move_threshold_m").as_double();
     republish_rotation_threshold_rad_ = get_parameter("republish_rotation_threshold_rad").as_double();
     track_timeout_frames_ = static_cast<int>(get_parameter("track_timeout_frames").as_int());
@@ -1186,6 +1196,37 @@ private:
     return dedup_distance_m_;
   }
 
+  int max_confirmed_for_color(const std::string & color) const
+  {
+    if (color == "black") {
+      return max_confirmed_black_;
+    }
+    if (color == "red") {
+      return max_confirmed_red_;
+    }
+    if (color == "green") {
+      return max_confirmed_green_;
+    }
+    if (color == "yellow") {
+      return max_confirmed_yellow_;
+    }
+    if (color == "blue") {
+      return max_confirmed_blue_;
+    }
+    return std::numeric_limits<int>::max();
+  }
+
+  int confirmed_track_count_for_color(const std::string & color) const
+  {
+    int count = 0;
+    for (const auto & track : tracks_) {
+      if (track.accepted && track.color() == color) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
   void update_tracks(const std::vector<Candidate> & candidates)
   {
     std::vector<bool> matched(tracks_.size(), false);
@@ -1205,6 +1246,12 @@ private:
         }
       }
       if (best_idx < 0) {
+        const int max_confirmed = max_confirmed_for_color(candidate.color);
+        if (max_confirmed >= 0 &&
+          confirmed_track_count_for_color(candidate.color) >= max_confirmed)
+        {
+          continue;
+        }
         BarrelTrack track;
         track.id = next_track_id_++;
         track.horizontal_votes = std::deque<bool>();
@@ -1994,6 +2041,11 @@ private:
   double dedup_distance_green_m_{0.4};
   double dedup_distance_yellow_m_{5.0};
   double dedup_distance_blue_m_{5.0};
+  int max_confirmed_black_{2};
+  int max_confirmed_red_{2};
+  int max_confirmed_green_{5};
+  int max_confirmed_yellow_{1};
+  int max_confirmed_blue_{1};
   double republish_move_threshold_m_{0.05};
   double republish_rotation_threshold_rad_{0.1};
   int track_timeout_frames_{150};

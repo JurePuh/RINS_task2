@@ -24,6 +24,11 @@ detect_barrel_cpp:
     dedup_distance_m.green: 0.4
     dedup_distance_m.yellow: 5.0
     dedup_distance_m.blue: 5.0
+    max_confirmed_tracks.black: 2
+    max_confirmed_tracks.red: 2
+    max_confirmed_tracks.green: 5
+    max_confirmed_tracks.yellow: 1
+    max_confirmed_tracks.blue: 1
     republish_move_threshold_m: 0.05
     republish_rotation_threshold_rad: 0.1
     track_timeout_frames: 150
