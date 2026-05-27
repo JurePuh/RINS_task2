@@ -21,6 +21,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <pcl/common/common.h>
 #include <pcl/features/normal_3d.h>
@@ -145,6 +146,7 @@ struct BarrelTrack
   std::string last_published_color;
   bool last_published_leaking{false};
   cv::Rect last_bbox;
+  std::string leak_image_path;
 
   std::string color() const
   {
@@ -538,6 +540,7 @@ private:
 
     cv::Mat hsv;
     cv::cvtColor(cv_ptr->image, hsv, cv::COLOR_BGR2HSV);
+    latest_raw_frame_ = cv_ptr->image.clone();
     cv::Mat debug_mask;
     std::vector<DebugRegion> debug_regions;
     std::vector<DebugAlignment> debug_alignments;
@@ -1418,6 +1421,39 @@ private:
     track.leak_negative_count = 0;
   }
 
+  std::string save_leak_snapshot_for_track(const BarrelTrack & track) const
+  {
+    if (latest_raw_frame_.empty()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Cannot save leak snapshot for id=%d: no camera frame available", track.id);
+      return "";
+    }
+
+    const std::filesystem::path image_dir =
+      std::filesystem::current_path() / "src" / "barrel_leak_cpp" / "img";
+    std::error_code ec;
+    std::filesystem::create_directories(image_dir, ec);
+    if (ec) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Failed to create leak image directory '%s': %s",
+        image_dir.string().c_str(), ec.message().c_str());
+      return "";
+    }
+
+    const std::filesystem::path image_path =
+      image_dir / ("barrel_" + std::to_string(track.id) + "_leak.png");
+    if (!cv::imwrite(image_path.string(), latest_raw_frame_)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Failed to save leak snapshot for id=%d at '%s'",
+        track.id, image_path.string().c_str());
+      return "";
+    }
+    return image_path.string();
+  }
+
   void publish_tracks()
   {
     visualization_msgs::msg::MarkerArray markers;
@@ -1436,6 +1472,10 @@ private:
         msg.color = track.color();
         msg.horizontal = track.horizontal();
         msg.leaking = track.leaking;
+        if (msg.leaking && track.leak_image_path.empty()) {
+          track.leak_image_path = save_leak_snapshot_for_track(track);
+        }
+        msg.path_to_image = track.leak_image_path;
         barrel_pub_->publish(msg);
         track.published = true;
         track.last_published_x = track.x;
@@ -2143,6 +2183,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_alignment_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_validity_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_leak_pub_;
+  cv::Mat latest_raw_frame_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 };
 
