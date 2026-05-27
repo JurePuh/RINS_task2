@@ -11,12 +11,14 @@ TASK_ANOMALY_RED = "anomaly_red"
 TASK_ANOMALY_GREEN = "anomaly_green"
 TASK_INSPECT_BARRELS = "inspect_barrels"
 TASK_COUNT_RINGS = "count_rings"
+TASK_DO_NOTHING = ""
 
 TASK_PRIORITY = (
     TASK_ANOMALY_RED,
     TASK_ANOMALY_GREEN,
     TASK_INSPECT_BARRELS,
     TASK_COUNT_RINGS,
+    TASK_DO_NOTHING,
 )
 
 TASK_SPEECH = {
@@ -24,6 +26,7 @@ TASK_SPEECH = {
     TASK_ANOMALY_GREEN: "detect anomalies in the green cell",
     TASK_INSPECT_BARRELS: "inspect the barrels",
     TASK_COUNT_RINGS: "count the rings",
+    TASK_DO_NOTHING: "do nothing",
 }
 
 TASK_CONFIRMATION_SPEECH = {
@@ -31,6 +34,7 @@ TASK_CONFIRMATION_SPEECH = {
     TASK_ANOMALY_GREEN: "green cell",
     TASK_INSPECT_BARRELS: "barrels",
     TASK_COUNT_RINGS: "rings",
+    TASK_DO_NOTHING: "nothing",
 }
 
 
@@ -51,6 +55,7 @@ _GREEN_CELL_PATTERN = re.compile(
 )
 _BARREL_PATTERN = re.compile(r"\b(barrel|barrels)\b")
 _RING_PATTERN = re.compile(r"\b(ring|rings)\b")
+_DO_NOTHING_PATTERN = re.compile(r"\b(none|nothing)\b")
 
 
 def normalize_transcript(text: str) -> str:
@@ -96,6 +101,8 @@ def parse_task(text: str) -> TaskParseResult:
         matched.add(TASK_INSPECT_BARRELS)
     if _RING_PATTERN.search(normalized):
         matched.add(TASK_COUNT_RINGS)
+    if _DO_NOTHING_PATTERN.search(normalized):
+        matched.add(TASK_DO_NOTHING)
 
     if TASK_ANOMALY_RED in matched and TASK_ANOMALY_GREEN in matched:
         return TaskParseResult(task=None, ambiguous=True)
