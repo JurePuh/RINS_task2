@@ -293,7 +293,7 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         cmd.header.stamp = self._node.get_clock().now().to_msg()
         cmd.twist.linear.x = _FWD_SPEED
         cmd.twist.angular.z = -_KP * float(msg.offset_right)
-        self._cmd_pub.publish(cmd) # TODO debug
+        self._cmd_pub.publish(cmd)
 
         # log_throttled( # TODO debug
         #     self._ros_logger, self._node, f"{self.name}.driving", "debug",
@@ -446,6 +446,17 @@ class _FullSpin(py_trees_ros.action_clients.FromConstant):
         )
 
 
+class _MarkRoom1Done(py_trees.behaviour.Behaviour):
+    def __init__(self, name: str = "MarkRoom1Done"):
+        super().__init__(name=name)
+        self.bb = self.attach_blackboard_client(name=self.name)
+        self.bb.register_key(key=bb.ROOM1_DONE, access=py_trees.common.Access.WRITE)
+
+    def update(self) -> py_trees.common.Status:
+        self.bb.set(bb.ROOM1_DONE, True)
+        return py_trees.common.Status.SUCCESS
+
+
 class _Shutdown(py_trees.behaviour.Behaviour):
     """Call rclpy.shutdown() so the node exits."""
 
@@ -478,7 +489,7 @@ def build() -> py_trees.composites.Sequence:
     check_sequence.add_children([TurnTowardsNearbyFace(), CheckIfAtCTO()])
     check_or_turn.add_children([
         check_sequence,
-        py_trees.decorators.SuccessIsFailure( # TODO Debug
+        py_trees.decorators.SuccessIsFailure(
             name="UTurnThenRetry",
             child=SpinByYaw(target_yaw_delta_rad=math.pi, name="UTurn"),
         ),
@@ -495,8 +506,10 @@ def build() -> py_trees.composites.Sequence:
 
     seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
+        _MarkRoom1Done(),
+        GenerateReport(), # TODO debug:
         SetArmPosition("look_for_qr", arm_settle_delay=0.0),
-        # GoToCorridorEntrance(), # TODO debug
+        GoToCorridorEntrance(),
         cto_loop,
         GenerateReport(),
     ])

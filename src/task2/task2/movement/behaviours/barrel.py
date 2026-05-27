@@ -19,10 +19,10 @@ from task2.movement.log_utils import log_throttled
 from task2.movement.models import Barrel, Pose
 
 
-_BARREL_FORWARD_M = 0.5
-_BARREL_RIGHT_M = 0.3
+_BARREL_FORWARD_M = 0.8
+_BARREL_RIGHT_M = 0.2
 _BARREL_YAW_OFFSET_RAD = 0.0
-_BARREL_GOAL_MIN_WALL_DIST_M = 0.6
+_BARREL_GOAL_MIN_WALL_DIST_M = 0.4
 
 
 def _wrap_to_pi(a: float) -> float:
