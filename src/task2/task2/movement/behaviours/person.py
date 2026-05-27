@@ -18,6 +18,7 @@ from msg_types.srv import ConversePerson as ConversePersonSrv
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import (
     NavigateToBlackboardGoal,
+    NavRetryThenSucceed,
     SERVICE_TIMEOUT_SEC,
     build_nav_goal,
     lookup_robot_xy,
@@ -533,9 +534,14 @@ def build() -> py_trees.composites.Sequence:
             name="NoPersonRecomputeRequested",
             flag_key=bb.RECOMPUTE_FACE_DESTINATION,
         ),
-        NavigateToBlackboardGoal(
-            name="NavigateToPersonDestination",
-            goal_key=bb.FACE_DESTINATION,
+        NavRetryThenSucceed(
+            child=NavigateToBlackboardGoal(
+                name="NavigateToPersonDestination",
+                goal_key=bb.FACE_DESTINATION,
+            ),
+            queue_key=bb.PENDING_PEOPLE,
+            head_id_fn=lambda p: p.face_id,
+            name="PersonNavRetry",
         ),
     ])
 

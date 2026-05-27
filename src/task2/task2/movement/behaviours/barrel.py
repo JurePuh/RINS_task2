@@ -12,6 +12,7 @@ from rclpy.impl.rcutils_logger import RcutilsLogger
 from task2.movement import blackboard as bb
 from task2.movement.behaviours._nav import (
     NavigateToBlackboardGoal,
+    NavRetryThenSucceed,
     build_nav_goal,
     lookup_robot_xy,
 )
@@ -227,9 +228,14 @@ def build() -> py_trees.composites.Sequence:
             name="NoBarrelRecomputeRequested",
             flag_key=bb.RECOMPUTE_BARREL_DESTINATION,
         ),
-        NavigateToBlackboardGoal(
-            name="NavigateToBarrelDestination",
-            goal_key=bb.BARREL_DESTINATION,
+        NavRetryThenSucceed(
+            child=NavigateToBlackboardGoal(
+                name="NavigateToBarrelDestination",
+                goal_key=bb.BARREL_DESTINATION,
+            ),
+            queue_key=bb.PENDING_BARRELS,
+            head_id_fn=lambda b: b.id,
+            name="BarrelNavRetry",
         ),
     ])
 

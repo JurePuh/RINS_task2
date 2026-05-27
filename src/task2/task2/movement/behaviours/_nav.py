@@ -2,7 +2,9 @@
 """
 
 import math
+from typing import Any, Callable
 
+import py_trees
 import py_trees_ros
 import tf2_ros
 from geometry_msgs.msg import PoseStamped
@@ -15,6 +17,7 @@ from task2.movement.models import Pose, Point, Vector
 
 STANDOFF = 0.5 # How far before target the goal should be set
 SERVICE_TIMEOUT_SEC = 1.0
+NAV_MAX_ATTEMPTS = 2
 
 
 def build_nav_goal(pose: Pose) -> NavigateToPose.Goal:
@@ -96,6 +99,84 @@ class LoggingNavWaypoint(py_trees_ros.action_clients.FromConstant):
             f"{self.name}: nav terminating with status={new_status.name}"
         )
         super().terminate(new_status)
+
+
+class NavRetryThenSucceed(py_trees.decorators.Decorator):
+    """Tolerate unreachable goals: after `max_attempts` child FAILUREs, return SUCCESS.
+
+    Wraps a nav behaviour so the outer flow keeps going even when the computed
+    destination is not reachable. Attempts are counted per-target: the counter
+    resets when the head of the wrapped queue changes (i.e. a new person/barrel
+    is being handled) or when the child reports SUCCESS.
+
+    - child SUCCESS  -> reset counter, return SUCCESS
+    - child RUNNING  -> return RUNNING
+    - child FAILURE  -> increment counter
+        - below threshold: return FAILURE (lets the outer sequence recompute
+          and try again on the next tick — same behaviour as before)
+        - at/over threshold: reset counter, return SUCCESS (give up gracefully)
+    """
+
+    def __init__(
+        self,
+        child: py_trees.behaviour.Behaviour,
+        queue_key: str,
+        head_id_fn: Callable[[Any], Any],
+        max_attempts: int = NAV_MAX_ATTEMPTS,
+        name: str = "NavRetryThenSucceed",
+    ):
+        super().__init__(name=name, child=child)
+        self._queue_key = queue_key
+        self._head_id_fn = head_id_fn
+        self._max_attempts = max_attempts
+        self._attempts = 0
+        self._tracked_id: Any = None
+
+        self._rbb = self.attach_blackboard_client(name=name)
+        self._rbb.register_key(key=queue_key, access=py_trees.common.Access.READ)
+
+    def setup(self, **kwargs):
+        super().setup(**kwargs)
+        self._ros_logger: RcutilsLogger = kwargs["node"].get_logger()
+
+    def _current_id(self) -> Any:
+        queue = self._rbb.get(self._queue_key)
+        if not queue:
+            return None
+        return self._head_id_fn(queue[0])
+
+    def update(self) -> py_trees.common.Status:
+        current_id = self._current_id()
+        if current_id != self._tracked_id:
+            if self._attempts > 0:
+                self._ros_logger.debug(
+                    f"{self.name}: target changed "
+                    f"({self._tracked_id} -> {current_id}); resetting attempts"
+                )
+            self._tracked_id = current_id
+            self._attempts = 0
+
+        status = self.decorated.status
+        if status == py_trees.common.Status.SUCCESS:
+            self._attempts = 0
+            return py_trees.common.Status.SUCCESS
+        if status == py_trees.common.Status.RUNNING:
+            return py_trees.common.Status.RUNNING
+
+        # FAILURE
+        self._attempts += 1
+        if self._attempts >= self._max_attempts:
+            self._ros_logger.warning(
+                f"{self.name}: nav failed {self._attempts}x for target "
+                f"{current_id}; giving up and continuing flow"
+            )
+            self._attempts = 0
+            return py_trees.common.Status.SUCCESS
+        self._ros_logger.warning(
+            f"{self.name}: nav failed (attempt {self._attempts}/"
+            f"{self._max_attempts}) for target {current_id}; will retry"
+        )
+        return py_trees.common.Status.FAILURE
 
 
 class NavigateToBlackboardGoal(py_trees_ros.action_clients.FromBlackboard):
