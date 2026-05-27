@@ -32,7 +32,7 @@ _STATUS_TOPIC: str = "/blue_line"
 
 # Scanline: fraction of image height to sample (0 = top, 1 = bottom).
 # This is the "back" row — the primary reference for line position.
-_SCANLINE_FRAC: float = 0.71
+_SCANLINE_FRAC: float = 0.75
 
 # A second "front" scanline is sampled this many pixels *above* the back row.
 # Used to compute a heading term (front - back): the line curves at corners
