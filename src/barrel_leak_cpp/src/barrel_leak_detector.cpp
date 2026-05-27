@@ -288,6 +288,7 @@ private:
     declare_parameter("candidate_min_3d_depth_to_middle_ratio", 0.0);
     declare_parameter("candidate_min_3d_middle_largest_ratio", 0.0);
     declare_parameter("candidate_max_3d_middle_largest_ratio", 0.0);
+    declare_parameter("candidate_max_distance_m", 2.0);
     declare_parameter("normal_search_radius_m", 0.05);
     declare_parameter("ransac_max_iterations", 250);
     declare_parameter("ransac_distance_threshold_m", 0.035);
@@ -399,6 +400,7 @@ private:
       get_parameter("candidate_min_3d_middle_largest_ratio").as_double();
     candidate_max_3d_middle_largest_ratio_ =
       get_parameter("candidate_max_3d_middle_largest_ratio").as_double();
+    candidate_max_distance_m_ = get_parameter("candidate_max_distance_m").as_double();
     normal_search_radius_m_ = get_parameter("normal_search_radius_m").as_double();
     ransac_max_iterations_ = static_cast<int>(get_parameter("ransac_max_iterations").as_int());
     ransac_distance_threshold_m_ = get_parameter("ransac_distance_threshold_m").as_double();
@@ -610,6 +612,11 @@ private:
           float fit_metric = std::numeric_limits<float>::quiet_NaN();
           if (!fit_cylinder(cluster, candidate, &fit_reason, &fit_metric)) {
             add_debug_region(color, fit_reason, contour, bbox, debug_regions, 0, fit_metric);
+            continue;
+          }
+          const float candidate_distance = candidate.centroid_camera.norm();
+          if (candidate_max_distance_m_ > 0.0 && candidate_distance > candidate_max_distance_m_) {
+            add_debug_region(color, "distance", contour, bbox, debug_regions, 0, candidate_distance);
             continue;
           }
           std::string transform_reason;
@@ -1313,6 +1320,11 @@ private:
 
   void update_track_leak_state(BarrelTrack & track, bool leak_detected)
   {
+    if (track.leak_confirmed_once) {
+      track.leaking = true;
+      return;
+    }
+
     if (leak_detected) {
       track.leak_negative_count = 0;
       track.leak_positive_count += 1;
@@ -1324,14 +1336,7 @@ private:
     }
 
     track.leak_positive_count = 0;
-    if (!track.leaking) {
-      track.leak_negative_count = 0;
-      return;
-    }
-    track.leak_negative_count += 1;
-    if (track.leak_negative_count >= leak_clear_threshold_) {
-      track.leaking = false;
-    }
+    track.leak_negative_count = 0;
   }
 
   void publish_tracks()
@@ -1968,6 +1973,7 @@ private:
   double candidate_min_3d_depth_to_middle_ratio_{0.0};
   double candidate_min_3d_middle_largest_ratio_{0.0};
   double candidate_max_3d_middle_largest_ratio_{0.0};
+  double candidate_max_distance_m_{2.0};
   double normal_search_radius_m_{0.05};
   int ransac_max_iterations_{250};
   double ransac_distance_threshold_m_{0.035};
