@@ -7,12 +7,14 @@ import subprocess
 import py_trees
 import py_trees_ros
 import rclpy
+import tf2_ros
 from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import LaserScan
 from nav2_msgs.action import Spin
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.publisher import Publisher
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.time import Time
 
 from rclpy.node import Node
 from rclpy.task import Future
@@ -26,7 +28,7 @@ from task2.movement.behaviours._speak import Speak
 from task2.movement.behaviours._nav import LoggingNavWaypoint, SERVICE_TIMEOUT_SEC, build_nav_goal
 from task2.movement.behaviours._odom_move import SpinByYaw
 from task2.movement.log_utils import log_throttled
-from task2.movement.models import Pose
+from task2.movement.models import Person, Pose
 
 
 _CORRIDOR_ENTRANCE_POSE = Pose( 2.85, -0.2, -1.5)
@@ -35,16 +37,99 @@ _FWD_SPEED = 0.25      # m/s forward while following the line
 _KP = 4.0              # proportional gain: angular.z = -_KP * offset
 _END_FRAMES = 10       # consecutive STATE_LOST frames after first LINE → done
 
-_OBSTACLE_DIST = 0.3          # m — bin avg below this → blocked
-_OBSTACLE_CONE = math.pi / 2  # rad — forward arc, split into _OBSTACLE_BINS
+_OBSTACLE_DIST = 0.4          # m — bin avg below this → blocked
+_OBSTACLE_CONE = math.pi / 4  # rad — forward arc, split into _OBSTACLE_BINS
 _OBSTACLE_BINS = 7            # number of equal-width direction buckets across the cone
-_LIDAR_FORWARD_OFFSET = -2.217  # rad — scan-frame angle that points robot-forward,
+_LIDAR_FORWARD_OFFSET = -math.pi/2  # rad — scan-frame angle that points robot-forward,
                                 # determined empirically (closest-beam debug log with
                                 # robot squared to a wall). TF yaw alone disagreed.
 
 _END_LINE = "All anomalies inspected. I'd take a bow but I don't have hips."
 
 _MAX_CTO_ATTEMPTS = 8  # follow-line + check tries before giving up
+
+_NEARBY_FACE_DIST = 1.0  # m — search radius for the pending face to turn towards
+
+
+def _wrap_to_pi(a: float) -> float:
+    return math.atan2(math.sin(a), math.cos(a))
+
+
+class TurnTowardsNearbyFace(py_trees_ros.action_clients.FromConstant):
+    """Spin so the camera frames a nearby pending face before CheckIfAtCTO.
+
+    Picks the closest Person in PENDING_PEOPLE within `_NEARBY_FACE_DIST` of the
+    robot and spins to face it. If none qualifies or tf fails, no-op SUCCESS.
+    """
+
+    def __init__(self, name: str = "TurnTowardsNearbyFace"):
+        self._spin_goal = Spin.Goal()
+        super().__init__(
+            name=name,
+            action_type=Spin,
+            action_name="spin",
+            action_goal=self._spin_goal,
+        )
+        self._pbb = self.attach_blackboard_client(name=f"{name}_pending")
+        self._pbb.register_key(key=bb.PENDING_PEOPLE, access=py_trees.common.Access.READ)
+        self._skip = False
+
+    def setup(self, **kwargs):
+        super().setup(**kwargs)
+        self.node = kwargs["node"]
+        self._ros_logger: RcutilsLogger = self.node.get_logger()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self.node)
+
+    def initialise(self):
+        self._skip = False
+        queue = self._pbb.get(bb.PENDING_PEOPLE)
+        if not queue:
+            self._ros_logger.info(f"{self.name}: no pending people; skipping")
+            self._skip = True
+            return
+
+        try:
+            t = self.tf_buffer.lookup_transform("map", "base_link", Time())
+        except Exception as exc:
+            self._ros_logger.warning(
+                f"{self.name}: tf lookup map->base_link failed: {exc}; skipping"
+            )
+            self._skip = True
+            return
+
+        rx = t.transform.translation.x
+        ry = t.transform.translation.y
+        q = t.transform.rotation
+        yaw = math.atan2(2.0 * q.w * q.z, 1.0 - 2.0 * q.z * q.z)
+
+        nearest: Person | None = None
+        nearest_d = _NEARBY_FACE_DIST
+        for p in queue:
+            d = math.hypot(p.x - rx, p.y - ry)
+            if d <= nearest_d:
+                nearest_d = d
+                nearest = p
+
+        if nearest is None:
+            self._ros_logger.info(
+                f"{self.name}: no pending face within {_NEARBY_FACE_DIST:.2f}m; skipping"
+            )
+            self._skip = True
+            return
+
+        desired = math.atan2(nearest.y - ry, nearest.x - rx)
+        self._spin_goal.target_yaw = _wrap_to_pi(desired - yaw)
+        self._ros_logger.info(
+            f"{self.name}: face_id={nearest.face_id} at d={nearest_d:.2f}m, "
+            f"spin {self._spin_goal.target_yaw:+.2f} rad"
+        )
+        super().initialise()
+
+    def update(self):
+        if self._skip:
+            return py_trees.common.Status.SUCCESS
+        return super().update()
 
 
 class GoToCorridorEntrance(LoggingNavWaypoint):
@@ -208,13 +293,13 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         cmd.header.stamp = self._node.get_clock().now().to_msg()
         cmd.twist.linear.x = _FWD_SPEED
         cmd.twist.angular.z = -_KP * float(msg.offset_right)
-        self._cmd_pub.publish(cmd) 
+        self._cmd_pub.publish(cmd) # TODO debug
 
-        log_throttled(
-            self._ros_logger, self._node, f"{self.name}.driving", "debug",
-            f"{self.name}: following line offset_right={msg.offset_right:.3f} "
-            f"-> cmd_vel linear.x={cmd.twist.linear.x:.2f} angular.z={cmd.twist.angular.z:.2f}",
-        )
+        # log_throttled( # TODO debug
+        #     self._ros_logger, self._node, f"{self.name}.driving", "debug",
+        #     f"{self.name}: following line offset_right={msg.offset_right:.3f} "
+        #     f"-> cmd_vel linear.x={cmd.twist.linear.x:.2f} angular.z={cmd.twist.angular.z:.2f}",
+        # )
 
         return py_trees.common.Status.RUNNING
 
@@ -389,9 +474,11 @@ def build() -> py_trees.composites.Sequence:
     # On a failed CTO check, run UTurn but report FAILURE so the Retry loop
     # restarts FollowBlueLine. Inverter flips UTurn's SUCCESS → FAILURE.
     check_or_turn = py_trees.composites.Selector(name="CTOorUTurn", memory=True)
+    check_sequence = py_trees.composites.Sequence(name="FaceThenCheck", memory=True)
+    check_sequence.add_children([TurnTowardsNearbyFace(), CheckIfAtCTO()])
     check_or_turn.add_children([
-        CheckIfAtCTO(),
-        py_trees.decorators.SuccessIsFailure(
+        check_sequence,
+        py_trees.decorators.SuccessIsFailure( # TODO Debug
             name="UTurnThenRetry",
             child=SpinByYaw(target_yaw_delta_rad=math.pi, name="UTurn"),
         ),
@@ -408,11 +495,8 @@ def build() -> py_trees.composites.Sequence:
 
     seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
-        # TODO For debugging in ------
-        # GenerateReport(),
-        # For debugging out -----
         SetArmPosition("look_for_qr", arm_settle_delay=0.0),
-        GoToCorridorEntrance(),
+        # GoToCorridorEntrance(), # TODO debug
         cto_loop,
         GenerateReport(),
     ])

@@ -42,7 +42,7 @@ _SCANLINE_FRONT_OFFSET_PX: int = 10
 # Weights for combining position (back row) and heading (front - back) into the
 # published offset. Heading dominant, position small so the robot still keeps the
 # line in frame on long straights.
-_W_POS: float = 0.2
+_W_POS: float = 0.5
 _W_HEAD: float = 4.0
 
 # HSV thresholds for blue masking. Tune these if the line isn't detected reliably.
@@ -52,6 +52,11 @@ _HSV_HIGH: np.ndarray = np.array([120, 130, 255], dtype=np.uint8)
 # Segment extraction tolerances on the masked scanline.
 _MIN_SEG_PX: int = 10  # drop runs shorter than this
 _MAX_GAP_PX: int = 5   # merge runs separated by <= this many off-pixels
+
+# While tracking, only accept new segments that overlap a ±N px neighborhood of
+# the previous frame's segments. Suppresses far-off "phantom" branches at V
+# crossroads approached from above. Re-acquisition (after LOST) is unconstrained.
+_NEIGHBOURHOOD_PX: int = 10
 
 # --- Debug visualization ----------------------------------------------------
 
@@ -126,6 +131,24 @@ def _extract_segments(row_mask: np.ndarray) -> list[Segment]:
     return [seg for seg in merged if seg.width() >= _MIN_SEG_PX]
 
 
+def _filter_by_neighbourhood(
+    segments: list[Segment], previous: list[Segment], px: int
+) -> list[Segment]:
+    """Keep only segments overlapping a previous segment expanded by ±px.
+
+    Empty `previous` means no constraint (re-acquisition after LOST).
+    """
+    if not previous:
+        return segments
+    kept: list[Segment] = []
+    for s in segments:
+        for p in previous:
+            if s.start <= p.end + px and s.end >= p.start - px:
+                kept.append(s)
+                break
+    return kept
+
+
 def _to_normalized(px: float, width: int) -> float:
     """Map pixel x in [0, width] to [-1, 1], clamped."""
     if width <= 0:
@@ -148,6 +171,10 @@ class BlueLineNode(Node):
 
         # Track previous classified state for transition logging.
         self._prev_state: LineState = LineState.LOST
+        # Last accepted segments per scanline, used to constrain the next frame's
+        # detections to a ±_NEIGHBOURHOOD_PX window around them.
+        self._prev_back_segs: list[Segment] = []
+        self._prev_front_segs: list[Segment] = []
         # Frame counter for periodic DEBUG heartbeats.
         self._frame_idx: int = 0
 
@@ -190,8 +217,14 @@ class BlueLineNode(Node):
         back_row = min(max(back_row, 0), img_h - 1)
         front_row: int = min(max(back_row - _SCANLINE_FRONT_OFFSET_PX, 0), img_h - 1)
 
-        back_segs, back_state, back_l, back_r, back_ll, back_rr = self._row_offsets(full_mask, back_row, img_w)
-        front_segs, front_state, front_l, front_r, front_ll, front_rr = self._row_offsets(full_mask, front_row, img_w)
+        back_segs, back_state, back_l, back_r, back_ll, back_rr = self._row_offsets(
+            full_mask, back_row, img_w, self._prev_back_segs
+        )
+        front_segs, front_state, front_l, front_r, front_ll, front_rr = self._row_offsets(
+            full_mask, front_row, img_w, self._prev_front_segs
+        )
+        self._prev_back_segs = back_segs
+        self._prev_front_segs = front_segs
 
         status = BlueLineStatus()
         # State classification always follows the back row (matches old behaviour).
@@ -276,11 +309,17 @@ class BlueLineNode(Node):
         cv2.waitKey(1)
 
     def _row_offsets(
-        self, full_mask: np.ndarray, row_index: int, width: int
+        self, full_mask: np.ndarray, row_index: int, width: int,
+        prev_segments: list[Segment],
     ) -> tuple[list[Segment], LineState, float, float, float, float]:
-        """Sample one scanline and classify it. Returns (segments, state, L_center, R_center, L_left, R_right)."""
+        """Sample one scanline and classify it. Returns (segments, state, L_center, R_center, L_left, R_right).
+
+        `prev_segments` constrains accepted detections to a ±_NEIGHBOURHOOD_PX
+        window around the previous frame's segments. Pass `[]` to accept all.
+        """
         row_mask: np.ndarray = full_mask[row_index, :]
         segments: list[Segment] = _extract_segments(row_mask)
+        segments = _filter_by_neighbourhood(segments, prev_segments, _NEIGHBOURHOOD_PX)
 
         if len(segments) == 0:
             return segments, LineState.LOST, 0.0, 0.0, 0.0, 0.0
