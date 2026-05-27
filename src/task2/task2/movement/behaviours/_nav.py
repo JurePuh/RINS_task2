@@ -16,7 +16,7 @@ from task2.movement.models import Pose, Point, Vector
 
 
 STANDOFF = 0.5 # How far before target the goal should be set
-SERVICE_TIMEOUT_SEC = 1.0
+SERVICE_TIMEOUT_SEC = 5.0
 NAV_MAX_ATTEMPTS = 2
 
 
