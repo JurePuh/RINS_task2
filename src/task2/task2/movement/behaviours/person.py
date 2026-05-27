@@ -34,7 +34,7 @@ from task2.movement.models import Gender, Person, Pose, Point, Vector
 _USE_CONVERSATION_PERSON: bool = False
 
 # Stub: i-th person we converse with returns the i-th task string.
-_STUB_CONVERSATION_RESULTS = ["anomaly_red", "count_rings", "inspect_barrels"]
+_STUB_CONVERSATION_RESULTS = ["inspect_barrels", "count_rings"]
 
 _RESULT_TO_ACTIVE_FLAG = {
     "anomaly_red":     bb.ANOMALY_RED_ACTIVE,
@@ -303,19 +303,21 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
                     f"(elapsed={elapsed:.2f}s, person={person.face_id})",
                 )
                 return py_trees.common.Status.RUNNING
-            self._ros_logger.warning(
+            self._ros_logger.error(
                 f"classify_face timed out for person {person.face_id} "
-                f"after {elapsed:.2f}s"
+                f"after {elapsed:.2f}s; labelling as 'unknown' and continuing"
             )
-            return py_trees.common.Status.FAILURE
+            self._assign_unknown(person)
+            return py_trees.common.Status.SUCCESS
 
         resp: ClassifyFace.Response = self._future.result()  # type: ignore
         if resp is None or not getattr(resp, "success", False):
-            self._ros_logger.warning(
+            self._ros_logger.error(
                 f"classify_face failed for person {person.face_id}: "
-                f"{getattr(resp, 'message', '?')}"
+                f"{getattr(resp, 'message', '?')}; labelling as 'unknown' and continuing"
             )
-            return py_trees.common.Status.FAILURE
+            self._assign_unknown(person)
+            return py_trees.common.Status.SUCCESS
 
         person.name = resp.name.split("_")[0]  # e.g. "alice_smith" -> "alice"
         person.role = resp.role
@@ -331,6 +333,12 @@ class ClassifyPersonCall(py_trees.behaviour.Behaviour):
         gender_str = person.gender.value if person.gender else None
         self.node.visualizer.set_person_label(person.face_id, person.name, gender_str)  # type: ignore[attr-defined]
         return py_trees.common.Status.SUCCESS
+
+    def _assign_unknown(self, person: Person) -> None:
+        person.name = "unknown"
+        person.role = ""
+        person.gender = None
+        self.node.visualizer.set_person_label(person.face_id, person.name, None)  # type: ignore[attr-defined]
 
     def terminate(self, new_status):
         if (
@@ -549,7 +557,10 @@ def build() -> py_trees.composites.Sequence:
     seq.add_children([
         ComputePersonDestination(),
         drive_or_recompute,
-        TurnTowardsPerson(),
+        py_trees.decorators.FailureIsSuccess(
+            name="TurnTowardsPersonTolerant",
+            child=TurnTowardsPerson(),
+        ),
         ClassifyPersonCall(),
         ConversePerson(),
         MarkPersonHandled(),
