@@ -100,17 +100,27 @@ class ComputePersonDestination(py_trees.behaviour.Behaviour):
         )
         # Query wall_normal_at
         if self.client.service_is_ready():
-            req = WallNormalAt.Request()
-            req.x = float(person.x)
-            req.y = float(person.y)
-            self._future = self.client.call_async(req)
-            self._ros_logger.info(
-                f"querying wall_normal_at({person.x:.2f}, {person.y:.2f}) "
-                f"for person {person.face_id}"
-            )
-            self._ros_logger.debug(
-                f"{self.name}: WallNormalAt request x={req.x:.2f} y={req.y:.2f}"
-            )
+            robot_xy = lookup_robot_xy(self.tf_buffer, self._ros_logger)
+            if robot_xy is None:
+                self._ros_logger.warning(
+                    f"robot pose not available via TF; using fallback for person {person.face_id}"
+                )
+            else:
+                req = WallNormalAt.Request()
+                req.x = float(person.x)
+                req.y = float(person.y)
+                req.robot_x = float(robot_xy[0])
+                req.robot_y = float(robot_xy[1])
+                self._future = self.client.call_async(req)
+                self._ros_logger.info(
+                    f"querying wall_normal_at({person.x:.2f}, {person.y:.2f}) "
+                    f"from robot ({req.robot_x:.2f}, {req.robot_y:.2f}) "
+                    f"for person {person.face_id}"
+                )
+                self._ros_logger.debug(
+                    f"{self.name}: WallNormalAt request x={req.x:.2f} y={req.y:.2f} "
+                    f"robot_x={req.robot_x:.2f} robot_y={req.robot_y:.2f}"
+                )
         else:
             self._ros_logger.warning(
                 f"wall_normal_at not available; using fallback for person {person.face_id}"
