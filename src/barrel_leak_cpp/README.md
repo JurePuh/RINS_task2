@@ -49,7 +49,7 @@ Debug windows:
 - `barrel_rejections`: candidates that failed gates, labelled with reasons like `area`, `depth`, `ransac`, `height`, or `orientation`.
 - `barrel_depth_alignment`: for masks with no depth, shows the nearby pixel shift that would find the most valid depth samples.
 - `barrel_depth_validity`: depth coverage view. Green means valid depth, yellow means mask plus valid depth, red means mask with no usable depth.
-- `barrel_leak`: leak debug overlay. It shows the barrel search area, cylinder inlier pixels, rejected leak blobs, and accepted leak blobs.
+- `barrel_leak`: leak debug overlay. It shows the barrel search area, rejected leak blobs, accepted leak blobs, and compact candidate metrics.
 
 You can inspect the same images without local windows using:
 
@@ -83,14 +83,21 @@ Tracks are accepted after `accept_threshold` supporting frames. Accepted tracks
 publish `BarrelDetect` with position, color, horizontal state, orientation
 normal, and leak status. A track republishes only when it first appears, moves
 far enough, changes orientation, changes color, or changes leak state.
+Detections are associated to an existing track only when the detected color
+matches the track color and the XY map distance is within `dedup_distance_m`.
+Never-published tentative tracks are removed after `track_timeout_frames` missed
+camera callbacks. Tracks that have already published on `/barrel_detect` are
+kept so later observations can reconnect to the same id.
 
 ## Leak Detection Flow
 
-For each detected barrel, the leak overlay removes the barrel's RANSAC inlier
-pixels from the color mask, then searches a padded area around the barrel for
-leftover low, flat, color-mask-positive blobs. A leak blob must have enough
-pixels and 3D points, be close enough to the barrel, sit inside the configured
-height/source-Z bands, and be thin enough to look like a flat spill. Accepted
-leak blobs update the track's `BarrelDetect.leaking` boolean after the
-configured confirmation threshold, and clear it after the clear threshold.
-
+For each horizontal detected barrel, the leak overlay searches a padded image
+ROI around the barrel bbox for HSV color-mask blobs. RANSAC cylinder inlier
+pixels are no longer removed from the leak mask, so leaks touching the barrel
+can still be detected. A leak blob must pass 2D shape gates for area, fill,
+circularity, and axis ratio, then have enough organized point-cloud samples
+whose source-Z values fall inside `leak_source_z_min_m` to
+`leak_source_z_max_m` at the configured inlier ratio. Map-frame height,
+distance from the barrel, and thickness remain secondary gates. Accepted leak
+blobs update the track's `BarrelDetect.leaking` boolean after the configured
+confirmation threshold, and clear it after the clear threshold.

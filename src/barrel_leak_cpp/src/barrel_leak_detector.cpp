@@ -3,8 +3,10 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -83,6 +85,10 @@ struct LeakDebugCandidate
   std::vector<cv::Point> contour;
   int point_count{0};
   double area_px{0.0};
+  double fill_ratio{0.0};
+  double circularity{0.0};
+  double axis_ratio{0.0};
+  double source_z_inlier_ratio{0.0};
   float centroid_z{0.0F};
   float source_min_z{0.0F};
   float source_max_z{0.0F};
@@ -263,10 +269,10 @@ private:
     declare_parameter("sync_slop_s", 0.08);
     declare_parameter("first_track_id", 100);
     declare_parameter("accept_threshold", 4);
-    declare_parameter("dedup_distance_m", 0.45);
+    declare_parameter("dedup_distance_m", 2.0);
     declare_parameter("republish_move_threshold_m", 0.05);
     declare_parameter("republish_rotation_threshold_rad", 0.1);
-    declare_parameter("track_timeout_frames", 18);
+    declare_parameter("track_timeout_frames", 150);
     declare_parameter("max_barrel_height_m", 0.70);
     declare_parameter("depth_min_m", 0.15);
     declare_parameter("depth_max_m", 6.0);
@@ -312,14 +318,19 @@ private:
     declare_parameter("enable_debug_depth_validity", true);
     declare_parameter("enable_debug_leak_overlay", true);
     declare_parameter("leak_search_padding_px", 60);
-    declare_parameter("leak_ransac_inlier_dilate_px", 9);
+    declare_parameter("leak_mask_morph_open_kernel", 3);
+    declare_parameter("leak_mask_morph_close_kernel", 7);
     declare_parameter("leak_min_area_px", 80.0);
     declare_parameter("leak_max_area_px", 20000.0);
+    declare_parameter("leak_min_fill_ratio", 0.45);
+    declare_parameter("leak_min_circularity", 0.30);
+    declare_parameter("leak_min_axis_ratio", 0.25);
     declare_parameter("leak_min_points", 15);
     declare_parameter("leak_min_height_m", 0.005);
     declare_parameter("leak_max_height_m", 0.08);
-    declare_parameter("leak_all_points_max_source_z_m", -0.21);
-    declare_parameter("leak_reject_all_points_below_source_z_m", -0.24);
+    declare_parameter("leak_source_z_min_m", -0.24);
+    declare_parameter("leak_source_z_max_m", -0.21);
+    declare_parameter("leak_source_z_inlier_ratio_min", 0.85);
     declare_parameter("leak_max_thickness_m", 0.035);
     declare_parameter("leak_max_distance_from_barrel_m", 0.85);
     declare_parameter("leak_horizontal_barrels_only", true);
@@ -418,17 +429,22 @@ private:
     enable_debug_depth_validity_ = get_parameter("enable_debug_depth_validity").as_bool();
     enable_debug_leak_overlay_ = get_parameter("enable_debug_leak_overlay").as_bool();
     leak_search_padding_px_ = static_cast<int>(get_parameter("leak_search_padding_px").as_int());
-    leak_ransac_inlier_dilate_px_ =
-      static_cast<int>(get_parameter("leak_ransac_inlier_dilate_px").as_int());
+    leak_mask_morph_open_kernel_ =
+      static_cast<int>(get_parameter("leak_mask_morph_open_kernel").as_int());
+    leak_mask_morph_close_kernel_ =
+      static_cast<int>(get_parameter("leak_mask_morph_close_kernel").as_int());
     leak_min_area_px_ = get_parameter("leak_min_area_px").as_double();
     leak_max_area_px_ = get_parameter("leak_max_area_px").as_double();
+    leak_min_fill_ratio_ = get_parameter("leak_min_fill_ratio").as_double();
+    leak_min_circularity_ = get_parameter("leak_min_circularity").as_double();
+    leak_min_axis_ratio_ = get_parameter("leak_min_axis_ratio").as_double();
     leak_min_points_ = static_cast<int>(get_parameter("leak_min_points").as_int());
     leak_min_height_m_ = get_parameter("leak_min_height_m").as_double();
     leak_max_height_m_ = get_parameter("leak_max_height_m").as_double();
-    leak_all_points_max_source_z_m_ =
-      get_parameter("leak_all_points_max_source_z_m").as_double();
-    leak_reject_all_points_below_source_z_m_ =
-      get_parameter("leak_reject_all_points_below_source_z_m").as_double();
+    leak_source_z_min_m_ = get_parameter("leak_source_z_min_m").as_double();
+    leak_source_z_max_m_ = get_parameter("leak_source_z_max_m").as_double();
+    leak_source_z_inlier_ratio_min_ =
+      get_parameter("leak_source_z_inlier_ratio_min").as_double();
     leak_max_thickness_m_ = get_parameter("leak_max_thickness_m").as_double();
     leak_max_distance_from_barrel_m_ = get_parameter("leak_max_distance_from_barrel_m").as_double();
     leak_horizontal_barrels_only_ = get_parameter("leak_horizontal_barrels_only").as_bool();
@@ -782,7 +798,12 @@ private:
     }
   }
 
-  cv::Mat build_mask(const cv::Mat & hsv, const std::vector<HsvRange> & ranges)
+  cv::Mat build_mask(
+    const cv::Mat & hsv,
+    const std::vector<HsvRange> & ranges,
+    int open_kernel,
+    int close_kernel,
+    bool open_first)
   {
     cv::Mat mask = cv::Mat::zeros(hsv.size(), CV_8UC1);
     for (const auto & range : ranges) {
@@ -790,17 +811,37 @@ private:
       cv::inRange(hsv, range.low, range.high, part);
       cv::bitwise_or(mask, part, mask);
     }
-    const int close_k = odd_kernel(mask_morph_close_kernel_);
-    const int open_k = odd_kernel(mask_morph_open_kernel_);
-    if (close_k > 1) {
-      const auto kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {close_k, close_k});
-      cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
-    }
-    if (open_k > 1) {
+    const int open_k = odd_kernel(open_kernel);
+    const int close_k = odd_kernel(close_kernel);
+
+    auto apply_open = [&]() {
+      if (open_k <= 1) {
+        return;
+      }
       const auto kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {open_k, open_k});
       cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+    };
+    auto apply_close = [&]() {
+      if (close_k <= 1) {
+        return;
+      }
+      const auto kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, {close_k, close_k});
+      cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel);
+    };
+
+    if (open_first) {
+      apply_open();
+      apply_close();
+    } else {
+      apply_close();
+      apply_open();
     }
     return mask;
+  }
+
+  cv::Mat build_mask(const cv::Mat & hsv, const std::vector<HsvRange> & ranges)
+  {
+    return build_mask(hsv, ranges, mask_morph_open_kernel_, mask_morph_close_kernel_, false);
   }
 
   std::vector<PixelCluster> clusters_from_contour(
@@ -1116,7 +1157,9 @@ private:
         const double dx = tracks_[i].x - candidate.centroid_map.x();
         const double dy = tracks_[i].y - candidate.centroid_map.y();
         const double dist = std::hypot(dx, dy);
-        if (dist < best_dist && dist <= dedup_distance_m_) {
+        if (track_matches_candidate_color(tracks_[i], candidate) &&
+          dist < best_dist && dist <= dedup_distance_m_)
+        {
           best_dist = dist;
           best_idx = static_cast<int>(i);
         }
@@ -1154,7 +1197,9 @@ private:
     tracks_.erase(
       std::remove_if(
         tracks_.begin(), tracks_.end(),
-        [this](const BarrelTrack & track) { return track.missed_frames > track_timeout_frames_; }),
+        [this](const BarrelTrack & track) {
+          return !track.published && track.missed_frames > track_timeout_frames_;
+        }),
       tracks_.end());
   }
 
@@ -1248,12 +1293,20 @@ private:
       const double dx = tracks_[i].x - candidate.centroid_map.x();
       const double dy = tracks_[i].y - candidate.centroid_map.y();
       const double dist = std::hypot(dx, dy);
-      if (dist < best_dist && dist <= dedup_distance_m_) {
+      if (track_matches_candidate_color(tracks_[i], candidate) &&
+        dist < best_dist && dist <= dedup_distance_m_)
+      {
         best_dist = dist;
         best_idx = static_cast<int>(i);
       }
     }
     return best_idx;
+  }
+
+  static bool track_matches_candidate_color(const BarrelTrack & track, const Candidate & candidate)
+  {
+    const std::string track_color = track.color();
+    return track_color == "unknown" || track_color == candidate.color;
   }
 
   void update_track_leak_state(BarrelTrack & track, bool leak_detected)
@@ -1505,6 +1558,7 @@ private:
     std::vector<LeakDebugCandidate> leak_candidates;
     std::vector<bool> leak_observed_by_track(tracks_.size(), false);
     std::vector<bool> leak_positive_by_track(tracks_.size(), false);
+    const cv::Mat leak_source_z_mask = build_leak_source_z_mask(hsv.size(), organized);
 
     for (const auto & barrel : candidates) {
       if (leak_horizontal_barrels_only_ && !barrel.horizontal) {
@@ -1513,15 +1567,6 @@ private:
       const int track_idx = matching_track_index_for_candidate(barrel);
       if (track_idx >= 0) {
         leak_observed_by_track[static_cast<size_t>(track_idx)] = true;
-      }
-
-      cv::Mat barrel_inliers = cv::Mat::zeros(image.size(), CV_8UC1);
-      const int inlier_radius = std::max(0, leak_ransac_inlier_dilate_px_);
-      for (const auto & pixel : barrel.ransac_inlier_pixels) {
-        if (pixel.x < 0 || pixel.y < 0 || pixel.x >= image.cols || pixel.y >= image.rows) {
-          continue;
-        }
-        cv::circle(barrel_inliers, pixel, std::max(1, inlier_radius), cv::Scalar(255), cv::FILLED);
       }
 
       const cv::Rect image_rect(0, 0, image.cols, image.rows);
@@ -1538,10 +1583,9 @@ private:
       cv::rectangle(overlay, search, {255, 255, 0}, 1);
 
       for (const auto & [leak_color_name, ranges] : hsv_ranges_) {
-        cv::Mat leak_mask = build_mask(hsv, ranges);
-        cv::Mat not_barrel_inliers;
-        cv::bitwise_not(barrel_inliers, not_barrel_inliers);
-        cv::bitwise_and(leak_mask, not_barrel_inliers, leak_mask);
+        cv::Mat leak_mask = build_mask(
+          hsv, ranges, leak_mask_morph_open_kernel_, leak_mask_morph_close_kernel_, true);
+        cv::bitwise_and(leak_mask, leak_source_z_mask, leak_mask);
         cv::Mat roi_mask = leak_mask(search).clone();
 
         std::vector<std::vector<cv::Point>> contours;
@@ -1576,11 +1620,6 @@ private:
     for (const auto & barrel : candidates) {
       const auto color = draw_color(barrel.color);
       cv::rectangle(overlay, barrel.bbox, color, 1);
-      for (const auto & pixel : barrel.ransac_inlier_pixels) {
-        if (pixel.x >= 0 && pixel.y >= 0 && pixel.x < image.cols && pixel.y < image.rows) {
-          overlay.at<cv::Vec3b>(pixel.y, pixel.x) = cv::Vec3b(255, 255, 255);
-        }
-      }
     }
 
     for (const auto & leak : leak_candidates) {
@@ -1588,18 +1627,28 @@ private:
       const int thickness = leak.accepted ? 3 : 1;
       std::vector<std::vector<cv::Point>> contours{leak.contour};
       cv::drawContours(overlay, contours, 0, color, thickness);
-      cv::rectangle(overlay, leak.bbox, color, thickness);
+      draw_fitted_leak_shape(overlay, leak.contour, color, thickness);
 
       std::string label;
       if (leak.accepted) {
-        label =
-          "LEAK " + leak.color +
-          " area " + std::to_string(static_cast<int>(leak.area_px)) +
-          " z " + std::to_string(leak.centroid_z).substr(0, 5) +
-          " src " + std::to_string(leak.source_min_z).substr(0, 5) +
-          ".." + std::to_string(leak.source_max_z).substr(0, 5);
+        std::ostringstream ss;
+        ss << std::fixed << std::setprecision(2)
+           << "LEAK " << leak.color
+           << " area " << static_cast<int>(leak.area_px)
+           << " fill " << leak.fill_ratio
+           << " circ " << leak.circularity
+           << " z " << leak.source_z_inlier_ratio;
+        label = ss.str();
       } else {
-        label = "leak reject:" + leak.reason;
+        std::ostringstream ss;
+        ss << std::fixed << std::setprecision(2)
+           << leak.reason
+           << " a " << static_cast<int>(leak.area_px)
+           << " f " << leak.fill_ratio
+           << " c " << leak.circularity
+           << " ax " << leak.axis_ratio
+           << " z " << leak.source_z_inlier_ratio;
+        label = ss.str();
       }
       cv::putText(
         overlay, label, {leak.bbox.x, std::max(15, leak.bbox.y - 6)},
@@ -1615,6 +1664,46 @@ private:
     }
   }
 
+  cv::Mat build_leak_source_z_mask(
+    const cv::Size & image_size,
+    const pcl::PointCloud<pcl::PointXYZRGB>::Ptr & organized) const
+  {
+    cv::Mat mask = cv::Mat::zeros(image_size, CV_8UC1);
+    const double source_z_min = std::min(leak_source_z_min_m_, leak_source_z_max_m_);
+    const double source_z_max = std::max(leak_source_z_min_m_, leak_source_z_max_m_);
+    const int width = std::min(image_size.width, static_cast<int>(organized->width));
+    const int height = std::min(image_size.height, static_cast<int>(organized->height));
+
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        const auto & point = organized->at(x, y);
+        if (pcl::isFinite(point) && point.z >= source_z_min && point.z <= source_z_max) {
+          mask.at<uint8_t>(y, x) = 255;
+        }
+      }
+    }
+    return mask;
+  }
+
+  static void draw_fitted_leak_shape(
+    cv::Mat & overlay,
+    const std::vector<cv::Point> & contour,
+    const cv::Scalar & color,
+    int thickness)
+  {
+    if (contour.size() >= 5) {
+      cv::ellipse(overlay, cv::fitEllipse(contour), color, thickness, cv::LINE_AA);
+      return;
+    }
+
+    cv::Point2f center;
+    float radius = 0.0F;
+    cv::minEnclosingCircle(contour, center, radius);
+    if (radius > 0.0F) {
+      cv::circle(overlay, center, static_cast<int>(std::round(radius)), color, thickness, cv::LINE_AA);
+    }
+  }
+
   void evaluate_leak_candidate(
     const Candidate & barrel,
     LeakDebugCandidate & leak,
@@ -1623,6 +1712,38 @@ private:
   {
     if (leak.area_px < leak_min_area_px_ || leak.area_px > leak_max_area_px_) {
       leak.reason = "area";
+      return;
+    }
+    leak.fill_ratio = leak.area_px / std::max(1, leak.bbox.area());
+    if (leak.fill_ratio < leak_min_fill_ratio_) {
+      leak.reason = "fill";
+      return;
+    }
+
+    const double perimeter = cv::arcLength(leak.contour, true);
+    if (perimeter <= 1e-6) {
+      leak.reason = "perimeter";
+      return;
+    }
+    constexpr double kPi = 3.14159265358979323846;
+    leak.circularity = 4.0 * kPi * leak.area_px / (perimeter * perimeter);
+    if (leak.circularity < leak_min_circularity_) {
+      leak.reason = "circle";
+      return;
+    }
+
+    leak.axis_ratio = static_cast<double>(std::min(leak.bbox.width, leak.bbox.height)) /
+      static_cast<double>(std::max(1, std::max(leak.bbox.width, leak.bbox.height)));
+    if (leak.contour.size() >= 5) {
+      const cv::RotatedRect ellipse = cv::fitEllipse(leak.contour);
+      const double major = std::max(ellipse.size.width, ellipse.size.height);
+      const double minor = std::min(ellipse.size.width, ellipse.size.height);
+      if (major > 1e-6) {
+        leak.axis_ratio = minor / major;
+      }
+    }
+    if (leak.axis_ratio < leak_min_axis_ratio_) {
+      leak.reason = "axis";
       return;
     }
 
@@ -1635,6 +1756,9 @@ private:
     Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     float source_min_z = std::numeric_limits<float>::max();
     float source_max_z = -std::numeric_limits<float>::max();
+    int source_z_inliers = 0;
+    const double source_z_min = std::min(leak_source_z_min_m_, leak_source_z_max_m_);
+    const double source_z_max = std::max(leak_source_z_min_m_, leak_source_z_max_m_);
     const int x_end = std::min(leak.bbox.x + leak.bbox.width, static_cast<int>(organized->width));
     const int y_end = std::min(leak.bbox.y + leak.bbox.height, static_cast<int>(organized->height));
     for (int y = std::max(0, leak.bbox.y); y < y_end; ++y) {
@@ -1643,11 +1767,14 @@ private:
           continue;
         }
         const auto & point = organized->at(x, y);
-        if (!pcl::isFinite(point) || point.z < depth_min_m_ || point.z > depth_max_m_) {
+        if (!pcl::isFinite(point)) {
           continue;
         }
         source_min_z = std::min(source_min_z, point.z);
         source_max_z = std::max(source_max_z, point.z);
+        if (point.z >= source_z_min && point.z <= source_z_max) {
+          ++source_z_inliers;
+        }
 
         Eigen::Vector3f map_point;
         if (!transform_point_to_target(header, Eigen::Vector3f(point.x, point.y, point.z), &map_point)) {
@@ -1666,12 +1793,10 @@ private:
     }
     leak.source_min_z = source_min_z;
     leak.source_max_z = source_max_z;
-    if (leak.source_max_z > leak_all_points_max_source_z_m_) {
-      leak.reason = "source_high";
-      return;
-    }
-    if (leak.source_max_z <= leak_reject_all_points_below_source_z_m_) {
-      leak.reason = "source_floor";
+    leak.source_z_inlier_ratio =
+      static_cast<double>(source_z_inliers) / static_cast<double>(leak.point_count);
+    if (leak.source_z_inlier_ratio < leak_source_z_inlier_ratio_min_) {
+      leak.reason = "zband";
       return;
     }
 
@@ -1818,10 +1943,10 @@ private:
   double sync_slop_s_{0.08};
   int next_track_id_{100};
   int accept_threshold_{4};
-  double dedup_distance_m_{0.45};
+  double dedup_distance_m_{2.0};
   double republish_move_threshold_m_{0.05};
   double republish_rotation_threshold_rad_{0.1};
-  int track_timeout_frames_{18};
+  int track_timeout_frames_{150};
   double max_barrel_height_m_{0.70};
   double depth_min_m_{0.15};
   double depth_max_m_{6.0};
@@ -1867,14 +1992,19 @@ private:
   bool enable_debug_depth_validity_{true};
   bool enable_debug_leak_overlay_{true};
   int leak_search_padding_px_{60};
-  int leak_ransac_inlier_dilate_px_{9};
+  int leak_mask_morph_open_kernel_{3};
+  int leak_mask_morph_close_kernel_{7};
   double leak_min_area_px_{80.0};
   double leak_max_area_px_{20000.0};
+  double leak_min_fill_ratio_{0.45};
+  double leak_min_circularity_{0.30};
+  double leak_min_axis_ratio_{0.25};
   int leak_min_points_{15};
   double leak_min_height_m_{0.005};
   double leak_max_height_m_{0.08};
-  double leak_all_points_max_source_z_m_{-0.21};
-  double leak_reject_all_points_below_source_z_m_{-0.24};
+  double leak_source_z_min_m_{-0.24};
+  double leak_source_z_max_m_{-0.21};
+  double leak_source_z_inlier_ratio_min_{0.85};
   double leak_max_thickness_m_{0.035};
   double leak_max_distance_from_barrel_m_{0.85};
   bool leak_horizontal_barrels_only_{true};

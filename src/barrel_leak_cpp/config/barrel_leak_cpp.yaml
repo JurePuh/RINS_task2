@@ -18,13 +18,13 @@ detect_barrel_cpp:
     sync_slop_s: 0.08
     first_track_id: 100
     accept_threshold: 10
-    dedup_distance_m: 0.45
+    dedup_distance_m: 1.0
     republish_move_threshold_m: 0.05
     republish_rotation_threshold_rad: 0.1
-    track_timeout_frames: 18
+    track_timeout_frames: 150
     max_barrel_height_m: 0.42
 
-    depth_min_m: -0.24
+    depth_min_m: -0.20
     depth_max_m: -0.07
     cluster_tolerance_m: 0.07
     cluster_min_points: 40
@@ -90,15 +90,20 @@ detect_barrel_cpp:
 
     enable_debug_leak_overlay: true
     leak_search_padding_px: 60
-    leak_ransac_inlier_dilate_px: 9
+    leak_mask_morph_open_kernel: 3
+    leak_mask_morph_close_kernel: 7
     leak_min_area_px: 200.0
     leak_max_area_px: 20000.0
+    leak_min_fill_ratio: 0.45
+    leak_min_circularity: 0.30
+    leak_min_axis_ratio: 0.25
     leak_min_points: 15
     leak_min_height_m: 0.005
     leak_max_height_m: 0.08
-    leak_all_points_max_source_z_m: -0.21
-    leak_reject_all_points_below_source_z_m: -0.24
-    leak_max_thickness_m: 0.035
+    leak_source_z_min_m: -0.24
+    leak_source_z_max_m: -0.21
+    leak_source_z_inlier_ratio_min: 0.85
+    leak_max_thickness_m: 0.05
     leak_max_distance_from_barrel_m: 0.85
     leak_horizontal_barrels_only: true
     leak_confirm_threshold: 3
