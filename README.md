@@ -17,24 +17,11 @@ sudo apt install -y \
 - `libportaudio2` + `portaudio19-dev` + `espeak-ng` are needed for the conversation/speak nodes (microphone + TTS).
 - `ros-jazzy-py-trees-ros` + `ros-jazzy-py-trees` are needed for the movement behaviour tree node.
 
-## 2. Python virtual environment
-
-Create and activate a venv that you will source alongside your ROS environment:
-
-```bash
-python3 -m venv ~/venvs/rins --system-site-packages
-source ~/venvs/rins/bin/activate
-```
-
-`--system-site-packages` is important so the venv can still see ROS 2's Python packages (`rclpy`, `cv_bridge`, ...).
-
 ## 3. Pip packages
-
-Inside the activated venv:
 
 ```bash
 pip install \
-    numpy \
+    "numpy<2" \
     opencv-python \
     torch torchvision \
     ultralytics \
