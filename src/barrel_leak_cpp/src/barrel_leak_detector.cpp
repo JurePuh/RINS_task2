@@ -1691,16 +1691,26 @@ private:
     const cv::Scalar & color,
     int thickness)
   {
+    const int safe_thickness = std::max(1, thickness);
     if (contour.size() >= 5) {
-      cv::ellipse(overlay, cv::fitEllipse(contour), color, thickness, cv::LINE_AA);
-      return;
+      const cv::RotatedRect fitted = cv::fitEllipse(contour);
+      const float width = fitted.size.width;
+      const float height = fitted.size.height;
+      if (
+        std::isfinite(width) && std::isfinite(height) &&
+        width > 0.0F && height > 0.0F)
+      {
+        cv::ellipse(overlay, fitted, color, safe_thickness, cv::LINE_AA);
+        return;
+      }
     }
 
     cv::Point2f center;
     float radius = 0.0F;
     cv::minEnclosingCircle(contour, center, radius);
     if (radius > 0.0F) {
-      cv::circle(overlay, center, static_cast<int>(std::round(radius)), color, thickness, cv::LINE_AA);
+      cv::circle(
+        overlay, center, static_cast<int>(std::round(radius)), color, safe_thickness, cv::LINE_AA);
     }
   }
 
