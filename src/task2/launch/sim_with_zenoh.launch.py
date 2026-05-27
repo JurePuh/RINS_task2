@@ -6,7 +6,7 @@ import os
 
 # Available worlds (from dis_tutorial3/worlds):
 #   task2_blue_demo, task2_green_demo, task2_yellow_demo,
-WORLD = 'task2_green_demo'
+WORLD = 'task2'
 
 
 def generate_launch_description():
