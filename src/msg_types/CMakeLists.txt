@@ -20,6 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ClassifyFace.srv"
   "srv/DetectAnomalies.srv"
   "srv/WallNormalAt.srv"
+  "srv/NearestWall.srv"
   "srv/LineFitInDirection.srv"
   "srv/ConversePerson.srv"
   "srv/DetectLeak.srv"

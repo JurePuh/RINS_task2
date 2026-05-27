@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -12,7 +13,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
 
-from msg_types.srv import WallNormalAt
+from msg_types.srv import NearestWall, WallNormalAt
 
 from .exceptions import WallQueryError, WallQueryInternalError
 from .models import Map
@@ -55,6 +56,9 @@ class WallNormalAtNode(Node):
 
         self._srv = self.create_service(
             WallNormalAt, "wall_normal_at", self._handle
+        )
+        self._nearest_wall_srv = self.create_service(
+            NearestWall, "nearest_wall", self._handle_nearest_wall
         )
 
         # Visualization publishers (for debugging in RViz)
@@ -147,6 +151,60 @@ class WallNormalAtNode(Node):
         response.normal_x = float(nx)
         response.normal_y = float(ny)
         return response
+
+    # ── nearest_wall service ──────────────────────────────────────────────────
+
+    def _handle_nearest_wall(
+        self, request: NearestWall.Request, response: NearestWall.Response
+    ) -> NearestWall.Response:
+        try:
+            if self._map is None:
+                raise WallQueryError("Map not yet received")
+            m = self._map
+            row, col = m.world_to_pixel(request.x, request.y)
+            if not m.in_bounds(row, col):
+                raise WallQueryError(
+                    f"Query point ({request.x:.2f}, {request.y:.2f}) is outside the map"
+                )
+            wall_row, wall_col = self._find_nearest_boundary(m, row, col)
+            wx, wy = m.pixel_to_world_centre(wall_row, wall_col)
+            response.success = True
+            response.point_x = float(wx)
+            response.point_y = float(wy)
+            self._logger.info(
+                f"NearestWall query at ({request.x:.2f}, {request.y:.2f}) → "
+                f"wall at ({wx:.2f}, {wy:.2f})"
+            )
+        except WallQueryError as exc:
+            self._logger.warn(f"NearestWall query failed: {exc}")
+            response.success = False
+        return response
+
+    def _find_nearest_boundary(self, m: Map, row: int, col: int) -> tuple[int, int]:
+        """BFS from (row, col) to find the nearest wall-boundary pixel."""
+        visited: set[tuple[int, int]] = set()
+        queue: deque[tuple[int, int]] = deque()
+        queue.append((row, col))
+        visited.add((row, col))
+
+        eight_neighbours = [
+            (dr, dc)
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if (dr, dc) != (0, 0)
+        ]
+
+        while queue:
+            r, c = queue.popleft()
+            if self._is_boundary_pixel(m, r, c):
+                return r, c
+            for dr, dc in eight_neighbours:
+                nr, nc = r + dr, c + dc
+                if m.in_bounds(nr, nc) and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+
+        raise WallQueryError("No wall-boundary pixel found anywhere in the map")
 
     # ── Algorithm helpers ─────────────────────────────────────────────────────
 
