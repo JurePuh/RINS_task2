@@ -70,8 +70,11 @@ class DetectRings(Node):
         # --- Depth sampling ---
         self.depth_window_radius: int = 2
         self.min_valid_depth_samples: int = 4
+        self.min_valid_color_depth_samples: int = 6
         self.min_depth_m: float = 0.1
         self.max_depth_m: float = 8.0
+        self.max_depth_iqr_m: float = 0.30
+        self.nearest_cluster_band_m: float = 0.08
 
         # --- Color topology checks ---
         self.min_annulus_fill: float = 0.18
@@ -236,6 +239,67 @@ class DetectRings(Node):
             return None
         return np.median(patch, axis=0)
 
+    def median_depth_color_annulus_xyz(
+        self,
+        pc_xyz: np.ndarray,
+        color_mask: np.ndarray,
+        cx: int,
+        cy: int,
+        inner_radius: float,
+        outer_radius: float,
+    ) -> Optional[np.ndarray]:
+        """Sample depth on annulus pixels that also match detected color.
+
+        This prevents background/wall points from dominating location estimation.
+        """
+        h, w, _ = pc_xyz.shape
+        rr = int(max(outer_radius + 2, self.depth_window_radius))
+        x0, x1 = max(0, cx - rr), min(w, cx + rr + 1)
+        y0, y1 = max(0, cy - rr), min(h, cy + rr + 1)
+        if x0 >= x1 or y0 >= y1:
+            return None
+
+        yy, xx = np.indices((y1 - y0, x1 - x0))
+        xx = xx + x0
+        yy = yy + y0
+        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        annulus_mask = (dist >= inner_radius) & (dist <= outer_radius)
+        if not np.any(annulus_mask):
+            return None
+
+        local_color = color_mask[y0:y1, x0:x1] > 0
+        selected = annulus_mask & local_color
+        color_depth_count = int(np.count_nonzero(selected))
+        if color_depth_count < self.min_valid_color_depth_samples:
+            self.get_logger().debug(
+                f"REJECTED depth: too few color-annulus samples={color_depth_count} "
+                f"(min={self.min_valid_color_depth_samples})"
+            )
+            return None
+
+        patch = pc_xyz[y0:y1, x0:x1, :][selected]
+        patch = self._filter_depth_samples(patch)
+        if patch is None or patch.shape[0] < self.min_valid_color_depth_samples:
+            self.get_logger().debug("REJECTED depth: insufficient valid filtered color-annulus samples")
+            return None
+
+        depths = np.linalg.norm(patch, axis=1)
+        q1 = float(np.percentile(depths, 25))
+        q3 = float(np.percentile(depths, 75))
+        iqr = q3 - q1
+        if iqr > self.max_depth_iqr_m:
+            self.get_logger().debug(
+                f"REJECTED depth: mixed foreground/background iqr={iqr:.3f} > {self.max_depth_iqr_m:.3f}"
+            )
+            return None
+
+        dmin = float(np.min(depths))
+        near = np.abs(depths - dmin) <= self.nearest_cluster_band_m
+        near_pts = patch[near]
+        if near_pts.shape[0] >= self.min_valid_color_depth_samples:
+            return np.median(near_pts, axis=0)
+        return np.median(patch, axis=0)
+
     # --- Color masks --------------------------------------------------------
 
     def build_color_masks(self, bgr_image: np.ndarray) -> dict[str, np.ndarray]:
@@ -379,9 +443,14 @@ class DetectRings(Node):
                 self.get_logger().debug("REJECTED center has same color")
                 continue
 
-            xyz = self.median_depth_annulus_xyz(pc, cx, cy, inner_radius, outer_radius)
-            if xyz is None:
-                xyz = self.median_depth_xyz(pc, cx, cy)
+            xyz = self.median_depth_color_annulus_xyz(
+                pc,
+                color_mask,
+                cx,
+                cy,
+                inner_radius,
+                outer_radius,
+            )
             if xyz is None:
                 self.get_logger().debug("REJECTED no valid depth samples")
                 continue

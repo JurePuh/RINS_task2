@@ -19,6 +19,16 @@ detect_barrel_cpp:
     first_track_id: 100
     accept_threshold: 20
     dedup_distance_m: 0.40
+    dedup_distance_m.black: 3.0
+    dedup_distance_m.red: 2.0
+    dedup_distance_m.green: 0.4
+    dedup_distance_m.yellow: 5.0
+    dedup_distance_m.blue: 5.0
+    max_confirmed_tracks.black: 2
+    max_confirmed_tracks.red: 2
+    max_confirmed_tracks.green: 5
+    max_confirmed_tracks.yellow: 1
+    max_confirmed_tracks.blue: 1
     republish_move_threshold_m: 0.05
     republish_rotation_threshold_rad: 0.1
     track_timeout_frames: 150
@@ -67,9 +77,6 @@ detect_barrel_cpp:
     hsv_ranges.green: [35, 70, 35, 90, 255, 255]
     hsv_ranges.blue: [90, 60, 35, 140, 255, 255]
     hsv_ranges.yellow: [16, 80, 50, 35, 255, 255]
-    hsv_ranges.purple: [130, 45, 35, 165, 255, 255]
-    hsv_ranges.orange: [5, 80, 45, 20, 255, 255]
-    hsv_ranges.brown: [5, 35, 20, 25, 190, 170]
     hsv_ranges.black: [0, 0, 0, 179, 255, 55]
 
     stability_window_m: 8
