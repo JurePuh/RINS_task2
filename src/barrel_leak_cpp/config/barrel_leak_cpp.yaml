@@ -67,9 +67,6 @@ detect_barrel_cpp:
     hsv_ranges.green: [35, 70, 35, 90, 255, 255]
     hsv_ranges.blue: [90, 60, 35, 140, 255, 255]
     hsv_ranges.yellow: [16, 80, 50, 35, 255, 255]
-    hsv_ranges.purple: [130, 45, 35, 165, 255, 255]
-    hsv_ranges.orange: [5, 80, 45, 20, 255, 255]
-    hsv_ranges.brown: [5, 35, 20, 25, 190, 170]
     hsv_ranges.black: [0, 0, 0, 179, 255, 55]
 
     stability_window_m: 8

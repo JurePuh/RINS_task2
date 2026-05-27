@@ -474,7 +474,7 @@ private:
     draw_track_ids_ = get_parameter("draw_track_ids").as_bool();
     draw_normal_arrow_ = get_parameter("draw_normal_arrow").as_bool();
 
-    for (const auto & color : {"red", "green", "blue", "yellow", "purple", "orange", "brown", "black"}) {
+    for (const auto & color : {"red", "green", "blue", "yellow", "black"}) {
       hsv_ranges_[color] = parse_hsv_ranges(std::string("hsv_ranges.") + color);
     }
   }
