@@ -507,7 +507,7 @@ def build() -> py_trees.composites.Sequence:
     seq = py_trees.composites.Sequence(name="Room2", memory=True)
     seq.add_children([
         _MarkRoom1Done(),
-        GenerateReport(), # TODO debug:
+        # GenerateReport(), # TODO debug:
         SetArmPosition("look_for_qr", arm_settle_delay=0.0),
         GoToCorridorEntrance(),
         cto_loop,
