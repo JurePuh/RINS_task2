@@ -21,6 +21,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <pcl/common/common.h>
 #include <pcl/features/normal_3d.h>
@@ -145,6 +146,7 @@ struct BarrelTrack
   std::string last_published_color;
   bool last_published_leaking{false};
   cv::Rect last_bbox;
+  std::string leak_image_path;
 
   std::string color() const
   {
@@ -272,6 +274,16 @@ private:
     declare_parameter("first_track_id", 100);
     declare_parameter("accept_threshold", 4);
     declare_parameter("dedup_distance_m", 2.0);
+    declare_parameter("dedup_distance_m.black", 5.0);
+    declare_parameter("dedup_distance_m.red", 3.0);
+    declare_parameter("dedup_distance_m.green", 0.4);
+    declare_parameter("dedup_distance_m.yellow", 5.0);
+    declare_parameter("dedup_distance_m.blue", 5.0);
+    declare_parameter("max_confirmed_tracks.black", 2);
+    declare_parameter("max_confirmed_tracks.red", 2);
+    declare_parameter("max_confirmed_tracks.green", 5);
+    declare_parameter("max_confirmed_tracks.yellow", 1);
+    declare_parameter("max_confirmed_tracks.blue", 1);
     declare_parameter("republish_move_threshold_m", 0.05);
     declare_parameter("republish_rotation_threshold_rad", 0.1);
     declare_parameter("track_timeout_frames", 150);
@@ -288,6 +300,7 @@ private:
     declare_parameter("candidate_min_3d_depth_to_middle_ratio", 0.0);
     declare_parameter("candidate_min_3d_middle_largest_ratio", 0.0);
     declare_parameter("candidate_max_3d_middle_largest_ratio", 0.0);
+    declare_parameter("candidate_max_distance_m", 2.0);
     declare_parameter("normal_search_radius_m", 0.05);
     declare_parameter("ransac_max_iterations", 250);
     declare_parameter("ransac_distance_threshold_m", 0.035);
@@ -380,6 +393,16 @@ private:
     next_track_id_ = static_cast<int>(get_parameter("first_track_id").as_int());
     accept_threshold_ = static_cast<int>(get_parameter("accept_threshold").as_int());
     dedup_distance_m_ = get_parameter("dedup_distance_m").as_double();
+    dedup_distance_black_m_ = get_parameter("dedup_distance_m.black").as_double();
+    dedup_distance_red_m_ = get_parameter("dedup_distance_m.red").as_double();
+    dedup_distance_green_m_ = get_parameter("dedup_distance_m.green").as_double();
+    dedup_distance_yellow_m_ = get_parameter("dedup_distance_m.yellow").as_double();
+    dedup_distance_blue_m_ = get_parameter("dedup_distance_m.blue").as_double();
+    max_confirmed_black_ = static_cast<int>(get_parameter("max_confirmed_tracks.black").as_int());
+    max_confirmed_red_ = static_cast<int>(get_parameter("max_confirmed_tracks.red").as_int());
+    max_confirmed_green_ = static_cast<int>(get_parameter("max_confirmed_tracks.green").as_int());
+    max_confirmed_yellow_ = static_cast<int>(get_parameter("max_confirmed_tracks.yellow").as_int());
+    max_confirmed_blue_ = static_cast<int>(get_parameter("max_confirmed_tracks.blue").as_int());
     republish_move_threshold_m_ = get_parameter("republish_move_threshold_m").as_double();
     republish_rotation_threshold_rad_ = get_parameter("republish_rotation_threshold_rad").as_double();
     track_timeout_frames_ = static_cast<int>(get_parameter("track_timeout_frames").as_int());
@@ -399,6 +422,7 @@ private:
       get_parameter("candidate_min_3d_middle_largest_ratio").as_double();
     candidate_max_3d_middle_largest_ratio_ =
       get_parameter("candidate_max_3d_middle_largest_ratio").as_double();
+    candidate_max_distance_m_ = get_parameter("candidate_max_distance_m").as_double();
     normal_search_radius_m_ = get_parameter("normal_search_radius_m").as_double();
     ransac_max_iterations_ = static_cast<int>(get_parameter("ransac_max_iterations").as_int());
     ransac_distance_threshold_m_ = get_parameter("ransac_distance_threshold_m").as_double();
@@ -472,7 +496,7 @@ private:
     draw_track_ids_ = get_parameter("draw_track_ids").as_bool();
     draw_normal_arrow_ = get_parameter("draw_normal_arrow").as_bool();
 
-    for (const auto & color : {"red", "green", "blue", "yellow", "purple", "orange", "brown", "black"}) {
+    for (const auto & color : {"red", "green", "blue", "yellow", "black"}) {
       hsv_ranges_[color] = parse_hsv_ranges(std::string("hsv_ranges.") + color);
     }
   }
@@ -516,6 +540,7 @@ private:
 
     cv::Mat hsv;
     cv::cvtColor(cv_ptr->image, hsv, cv::COLOR_BGR2HSV);
+    latest_raw_frame_ = cv_ptr->image.clone();
     cv::Mat debug_mask;
     std::vector<DebugRegion> debug_regions;
     std::vector<DebugAlignment> debug_alignments;
@@ -610,6 +635,11 @@ private:
           float fit_metric = std::numeric_limits<float>::quiet_NaN();
           if (!fit_cylinder(cluster, candidate, &fit_reason, &fit_metric)) {
             add_debug_region(color, fit_reason, contour, bbox, debug_regions, 0, fit_metric);
+            continue;
+          }
+          const float candidate_distance = candidate.centroid_camera.norm();
+          if (candidate_max_distance_m_ > 0.0 && candidate_distance > candidate_max_distance_m_) {
+            add_debug_region(color, "distance", contour, bbox, debug_regions, 0, candidate_distance);
             continue;
           }
           std::string transform_reason;
@@ -1149,24 +1179,82 @@ private:
     return true;
   }
 
+  double dedup_distance_for_color(const std::string & color) const
+  {
+    if (color == "black") {
+      return dedup_distance_black_m_;
+    }
+    if (color == "red") {
+      return dedup_distance_red_m_;
+    }
+    if (color == "green") {
+      return dedup_distance_green_m_;
+    }
+    if (color == "yellow") {
+      return dedup_distance_yellow_m_;
+    }
+    if (color == "blue") {
+      return dedup_distance_blue_m_;
+    }
+    return dedup_distance_m_;
+  }
+
+  int max_confirmed_for_color(const std::string & color) const
+  {
+    if (color == "black") {
+      return max_confirmed_black_;
+    }
+    if (color == "red") {
+      return max_confirmed_red_;
+    }
+    if (color == "green") {
+      return max_confirmed_green_;
+    }
+    if (color == "yellow") {
+      return max_confirmed_yellow_;
+    }
+    if (color == "blue") {
+      return max_confirmed_blue_;
+    }
+    return std::numeric_limits<int>::max();
+  }
+
+  int confirmed_track_count_for_color(const std::string & color) const
+  {
+    int count = 0;
+    for (const auto & track : tracks_) {
+      if (track.accepted && track.color() == color) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
   void update_tracks(const std::vector<Candidate> & candidates)
   {
     std::vector<bool> matched(tracks_.size(), false);
     for (const auto & candidate : candidates) {
       int best_idx = -1;
       double best_dist = std::numeric_limits<double>::max();
+      const double dedup_distance_for_candidate = dedup_distance_for_color(candidate.color);
       for (size_t i = 0; i < tracks_.size(); ++i) {
         const double dx = tracks_[i].x - candidate.centroid_map.x();
         const double dy = tracks_[i].y - candidate.centroid_map.y();
         const double dist = std::hypot(dx, dy);
         if (track_matches_candidate_color(tracks_[i], candidate) &&
-          dist < best_dist && dist <= dedup_distance_m_)
+          dist < best_dist && dist <= dedup_distance_for_candidate)
         {
           best_dist = dist;
           best_idx = static_cast<int>(i);
         }
       }
       if (best_idx < 0) {
+        const int max_confirmed = max_confirmed_for_color(candidate.color);
+        if (max_confirmed >= 0 &&
+          confirmed_track_count_for_color(candidate.color) >= max_confirmed)
+        {
+          continue;
+        }
         BarrelTrack track;
         track.id = next_track_id_++;
         track.horizontal_votes = std::deque<bool>();
@@ -1291,12 +1379,13 @@ private:
   {
     int best_idx = -1;
     double best_dist = std::numeric_limits<double>::max();
+    const double dedup_distance_for_candidate = dedup_distance_for_color(candidate.color);
     for (size_t i = 0; i < tracks_.size(); ++i) {
       const double dx = tracks_[i].x - candidate.centroid_map.x();
       const double dy = tracks_[i].y - candidate.centroid_map.y();
       const double dist = std::hypot(dx, dy);
       if (track_matches_candidate_color(tracks_[i], candidate) &&
-        dist < best_dist && dist <= dedup_distance_m_)
+        dist < best_dist && dist <= dedup_distance_for_candidate)
       {
         best_dist = dist;
         best_idx = static_cast<int>(i);
@@ -1313,6 +1402,11 @@ private:
 
   void update_track_leak_state(BarrelTrack & track, bool leak_detected)
   {
+    if (track.leak_confirmed_once) {
+      track.leaking = true;
+      return;
+    }
+
     if (leak_detected) {
       track.leak_negative_count = 0;
       track.leak_positive_count += 1;
@@ -1324,14 +1418,40 @@ private:
     }
 
     track.leak_positive_count = 0;
-    if (!track.leaking) {
-      track.leak_negative_count = 0;
-      return;
+    track.leak_negative_count = 0;
+  }
+
+  std::string save_leak_snapshot_for_track(const BarrelTrack & track) const
+  {
+    if (latest_raw_frame_.empty()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Cannot save leak snapshot for id=%d: no camera frame available", track.id);
+      return "";
     }
-    track.leak_negative_count += 1;
-    if (track.leak_negative_count >= leak_clear_threshold_) {
-      track.leaking = false;
+
+    const std::filesystem::path image_dir =
+      std::filesystem::current_path() / "src" / "barrel_leak_cpp" / "img";
+    std::error_code ec;
+    std::filesystem::create_directories(image_dir, ec);
+    if (ec) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Failed to create leak image directory '%s': %s",
+        image_dir.string().c_str(), ec.message().c_str());
+      return "";
     }
+
+    const std::filesystem::path image_path =
+      image_dir / ("barrel_" + std::to_string(track.id) + "_leak.png");
+    if (!cv::imwrite(image_path.string(), latest_raw_frame_)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Failed to save leak snapshot for id=%d at '%s'",
+        track.id, image_path.string().c_str());
+      return "";
+    }
+    return image_path.string();
   }
 
   void publish_tracks()
@@ -1352,6 +1472,10 @@ private:
         msg.color = track.color();
         msg.horizontal = track.horizontal();
         msg.leaking = track.leaking;
+        if (msg.leaking && track.leak_image_path.empty()) {
+          track.leak_image_path = save_leak_snapshot_for_track(track);
+        }
+        msg.path_to_image = track.leak_image_path;
         barrel_pub_->publish(msg);
         track.published = true;
         track.last_published_x = track.x;
@@ -1691,16 +1815,26 @@ private:
     const cv::Scalar & color,
     int thickness)
   {
+    const int safe_thickness = std::max(1, thickness);
     if (contour.size() >= 5) {
-      cv::ellipse(overlay, cv::fitEllipse(contour), color, thickness, cv::LINE_AA);
-      return;
+      const cv::RotatedRect fitted = cv::fitEllipse(contour);
+      const float width = fitted.size.width;
+      const float height = fitted.size.height;
+      if (
+        std::isfinite(width) && std::isfinite(height) &&
+        width > 0.0F && height > 0.0F)
+      {
+        cv::ellipse(overlay, fitted, color, safe_thickness, cv::LINE_AA);
+        return;
+      }
     }
 
     cv::Point2f center;
     float radius = 0.0F;
     cv::minEnclosingCircle(contour, center, radius);
     if (radius > 0.0F) {
-      cv::circle(overlay, center, static_cast<int>(std::round(radius)), color, thickness, cv::LINE_AA);
+      cv::circle(
+        overlay, center, static_cast<int>(std::round(radius)), color, safe_thickness, cv::LINE_AA);
     }
   }
 
@@ -1942,6 +2076,16 @@ private:
   int next_track_id_{100};
   int accept_threshold_{4};
   double dedup_distance_m_{2.0};
+  double dedup_distance_black_m_{5.0};
+  double dedup_distance_red_m_{3.0};
+  double dedup_distance_green_m_{0.4};
+  double dedup_distance_yellow_m_{5.0};
+  double dedup_distance_blue_m_{5.0};
+  int max_confirmed_black_{2};
+  int max_confirmed_red_{2};
+  int max_confirmed_green_{5};
+  int max_confirmed_yellow_{1};
+  int max_confirmed_blue_{1};
   double republish_move_threshold_m_{0.05};
   double republish_rotation_threshold_rad_{0.1};
   int track_timeout_frames_{150};
@@ -1958,6 +2102,7 @@ private:
   double candidate_min_3d_depth_to_middle_ratio_{0.0};
   double candidate_min_3d_middle_largest_ratio_{0.0};
   double candidate_max_3d_middle_largest_ratio_{0.0};
+  double candidate_max_distance_m_{2.0};
   double normal_search_radius_m_{0.05};
   int ransac_max_iterations_{250};
   double ransac_distance_threshold_m_{0.035};
@@ -2038,6 +2183,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_alignment_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_depth_validity_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_leak_pub_;
+  cv::Mat latest_raw_frame_;
   rclcpp::TimerBase::SharedPtr publish_timer_;
 };
 
