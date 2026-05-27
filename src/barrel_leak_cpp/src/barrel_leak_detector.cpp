@@ -7,12 +7,14 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Dense>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <message_filters/subscriber.h>
@@ -209,8 +211,8 @@ cv::Scalar draw_color(const std::string & color)
 class BarrelDetectorCpp : public rclcpp::Node
 {
 public:
-  BarrelDetectorCpp()
-  : Node("detect_barrel_cpp"),
+  explicit BarrelDetectorCpp(const rclcpp::NodeOptions & options = rclcpp::NodeOptions())
+  : Node("detect_barrel_cpp", options),
     tf_buffer_(get_clock()),
     tf_listener_(tf_buffer_)
   {
@@ -1658,10 +1660,8 @@ private:
     auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
     debug_leak_pub_->publish(*out);
 
-    if (show_debug_window_) {
-      cv::imshow(debug_leak_window_name_, overlay);
-      cv::waitKey(1);
-    }
+    cv::imshow(debug_leak_window_name_, overlay);
+    cv::waitKey(1);
   }
 
   cv::Mat build_leak_source_z_mask(
@@ -1921,10 +1921,8 @@ private:
     auto out = cv_bridge::CvImage(header, "bgr8", overlay).toImageMsg();
     debug_pub_->publish(*out);
 
-    if (show_debug_window_) {
-      cv::imshow(debug_window_name_, overlay);
-      cv::waitKey(1);
-    }
+    cv::imshow(debug_window_name_, overlay);
+    cv::waitKey(1);
   }
 
   std::string image_topic_;
@@ -2045,8 +2043,30 @@ private:
 
 int main(int argc, char ** argv)
 {
+  std::vector<std::string> args;
+  args.reserve(static_cast<size_t>(argc));
+  for (int i = 0; i < argc; ++i) {
+    args.emplace_back(argv[i]);
+  }
+
+  bool has_params_file = false;
+  for (size_t i = 1; i < args.size(); ++i) {
+    if (args[i] == "--params-file") {
+      has_params_file = true;
+      break;
+    }
+  }
+
+  rclcpp::NodeOptions options;
+  if (!has_params_file) {
+    const std::string default_params = std::filesystem::path(
+      ament_index_cpp::get_package_share_directory("barrel_leak_cpp")) /
+      "config/barrel_leak_cpp.yaml";
+    options.arguments({"--ros-args", "--params-file", default_params});
+  }
+
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<BarrelDetectorCpp>());
+  rclcpp::spin(std::make_shared<BarrelDetectorCpp>(options));
   rclcpp::shutdown();
   return 0;
 }

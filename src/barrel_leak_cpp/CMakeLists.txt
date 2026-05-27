@@ -6,6 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -31,6 +32,7 @@ target_link_libraries(detect_barrel_cpp
   ${OpenCV_LIBRARIES}
 )
 ament_target_dependencies(detect_barrel_cpp
+  ament_index_cpp
   rclcpp
   sensor_msgs
   geometry_msgs
