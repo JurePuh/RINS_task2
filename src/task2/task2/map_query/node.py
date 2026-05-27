@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -22,10 +21,14 @@ from .models import Map
 
 # Half-side of the square window (in pixels) used to collect boundary pixels
 # for the line fit.  A radius of 3 means a 7×7 pixel patch is searched.
-_DEFAULT_NEIGHBOURHOOD_RADIUS = 3
+_DEFAULT_NEIGHBOURHOOD_RADIUS = 5
 
 # 4-connected neighbour offsets: up, down, left, right
 _4_NEIGHBOURS = ((-1, 0), (1, 0), (0, -1), (0, 1))
+
+# Ray-search parameters (metres)
+_RAY_BACK_FROM_SUBJECT = 0.5  # start this far back toward the robot from S
+_RAY_PAST_SUBJECT = 0.5       # walk at most this far past S
 
 
 class WallNormalAtNode(Node):
@@ -104,8 +107,14 @@ class WallNormalAtNode(Node):
                 f"Query point ({request.x:.2f}, {request.y:.2f}) is outside the map"
             )
 
-        # ── Step 2: nearest wall-boundary pixel ───────────────────────────────
-        wall_row, wall_col = self._find_nearest_boundary(m, row, col)
+        # ── Step 2: wall pixel along the ray from robot → subject ─────────────
+        wall_row, wall_col = self._find_wall_along_ray(
+            m,
+            subject_x=request.x,
+            subject_y=request.y,
+            robot_x=request.robot_x,
+            robot_y=request.robot_y,
+        )
 
         # ── Step 3: collect neighbourhood for line fitting ────────────────────
         fit_pixels = self._collect_neighbourhood(m, wall_row, wall_col)
@@ -151,32 +160,58 @@ class WallNormalAtNode(Node):
                 return True
         return False
 
-    def _find_nearest_boundary(self, m: Map, row: int, col: int) -> tuple[int, int]:
-        """BFS from (row, col) to find the nearest wall-boundary pixel."""
-        visited: set[tuple[int, int]] = set()
-        queue: deque[tuple[int, int]] = deque()
-        queue.append((row, col))
-        visited.add((row, col))
+    def _find_wall_along_ray(
+        self,
+        m: Map,
+        subject_x: float,
+        subject_y: float,
+        robot_x: float,
+        robot_y: float,
+    ) -> tuple[int, int]:
+        """Walk a ray from robot → subject; return first free→occupied pixel transition.
 
-        # BFS 
-        eight_neighbours = [
-            (dr, dc)
-            for dr in (-1, 0, 1)
-            for dc in (-1, 0, 1)
-            if (dr, dc) != (0, 0)
-        ]
+        Start half a metre behind the subject (toward the robot) and step one
+        pixel at a time in the robot→subject direction until we cross from a
+        free pixel into an occupied one. That occupied pixel is the wall we
+        want — the one facing the robot.
+        """
+        dx = subject_x - robot_x
+        dy = subject_y - robot_y
+        dist = (dx * dx + dy * dy) ** 0.5
+        if dist < 1e-6:
+            raise WallQueryError("Robot position coincides with subject; no ray direction")
 
-        while queue:
-            r, c = queue.popleft()
-            if self._is_boundary_pixel(m, r, c):
+        ux, uy = dx / dist, dy / dist
+
+        step = m.resolution
+        start_offset = -_RAY_BACK_FROM_SUBJECT  # behind the subject toward robot
+        end_offset = _RAY_PAST_SUBJECT          # past the subject away from robot
+        n_steps = int((end_offset - start_offset) / step) + 1
+
+        prev_free: Optional[bool] = None
+        prev_pixel: Optional[tuple[int, int]] = None
+
+        for i in range(n_steps):
+            t = start_offset + i * step
+            sx = subject_x + ux * t
+            sy = subject_y + uy * t
+            r, c = m.world_to_pixel(sx, sy)
+            if not m.in_bounds(r, c):
+                prev_free = None
+                prev_pixel = None
+                continue
+            pixel = (r, c)
+            if pixel == prev_pixel:
+                continue
+            occupied = bool(m.grid[r, c])
+            if prev_free is True and occupied and self._is_boundary_pixel(m, r, c):
                 return r, c
-            for dr, dc in eight_neighbours:
-                nr, nc = r + dr, c + dc
-                if m.in_bounds(nr, nc) and (nr, nc) not in visited:
-                    visited.add((nr, nc))
-                    queue.append((nr, nc))
+            prev_free = not occupied
+            prev_pixel = pixel
 
-        raise WallQueryError("No wall-boundary pixel found anywhere in the map")
+        raise WallQueryError(
+            "No free→occupied transition along robot→subject ray within search range"
+        )
 
     def _collect_neighbourhood(
         self, m: Map, row: int, col: int, radius: int = _DEFAULT_NEIGHBOURHOOD_RADIUS

@@ -12,7 +12,6 @@ from task2.movement.models import Pose
 _DEFAULT_PATH: list[Pose] = [
     Pose( 0.02, -1.04, -0.67),
     Pose(-3.27, -0.37,  0.35),
-    Pose(-2.41, -0.19, -1.63),
     Pose(-4.23, -0.28,  1.54),
     Pose(-4.23, -0.28,  -1.54),
     Pose(-4.17, -2.42, -0.13),

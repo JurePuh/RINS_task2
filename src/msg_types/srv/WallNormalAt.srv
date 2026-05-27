@@ -1,5 +1,7 @@
 float32 x
 float32 y
+float32 robot_x
+float32 robot_y
 ---
 # Response
 bool success
