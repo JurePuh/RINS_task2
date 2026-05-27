@@ -8,9 +8,11 @@ import py_trees
 import py_trees_ros
 import rclpy
 from geometry_msgs.msg import TwistStamped
+from sensor_msgs.msg import LaserScan
 from nav2_msgs.action import Spin
 from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.publisher import Publisher
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from rclpy.node import Node
 from rclpy.task import Future
@@ -32,6 +34,13 @@ _CORRIDOR_ENTRANCE_POSE = Pose( 2.85, -0.2, -1.5)
 _FWD_SPEED = 0.25      # m/s forward while following the line
 _KP = 4.0              # proportional gain: angular.z = -_KP * offset
 _END_FRAMES = 10       # consecutive STATE_LOST frames after first LINE → done
+
+_OBSTACLE_DIST = 0.3          # m — bin avg below this → blocked
+_OBSTACLE_CONE = math.pi / 2  # rad — forward arc, split into _OBSTACLE_BINS
+_OBSTACLE_BINS = 7            # number of equal-width direction buckets across the cone
+_LIDAR_FORWARD_OFFSET = -2.217  # rad — scan-frame angle that points robot-forward,
+                                # determined empirically (closest-beam debug log with
+                                # robot squared to a wall). TF yaw alone disagreed.
 
 _END_LINE = "All anomalies inspected. I'd take a bow but I don't have hips."
 
@@ -57,8 +66,10 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
     def __init__(self, name: str = "FollowBlueLine"):
         super().__init__(name=name)
         self._last: BlueLineStatus | None = None
+        self._scan: LaserScan | None = None
         self._lost_streak = 0
         self._seen_line = False
+        self._state: str = "init"
 
     def setup(self, **kwargs):
         node = kwargs["node"]
@@ -68,20 +79,105 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
         # subscriber expects TwistStamped on /cmd_vel — plain Twist is ignored.
         self._cmd_pub: Publisher = node.create_publisher(TwistStamped, "/cmd_vel", 10)
         node.create_subscription(BlueLineStatus, "/blue_line", self._on_status, 10)
+        scan_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        node.create_subscription(LaserScan, "/scan_filtered", self._on_scan, scan_qos)
 
     def _on_status(self, msg: BlueLineStatus) -> None:
         self._last = msg
+
+    def _on_scan(self, msg: LaserScan) -> None:
+        self._scan = msg
+
+    def _lidar_snapshot(self) -> list[float | None]:
+        """Return mean range per direction bucket across the forward cone.
+
+        The forward ±_OBSTACLE_CONE/2 arc is split into _OBSTACLE_BINS equal-width
+        buckets, ordered left → right. A bin's value is None when no valid beam
+        falls in it.
+        """
+        scan = self._scan
+        if scan is None:
+            return [None] * _OBSTACLE_BINS
+        half_cone = _OBSTACLE_CONE / 2.0
+        bin_width = _OBSTACLE_CONE / _OBSTACLE_BINS
+        sums = [0.0] * _OBSTACLE_BINS
+        counts = [0] * _OBSTACLE_BINS
+        min_r = float("inf")
+        min_raw_angle = 0.0
+        min_rel_angle = 0.0
+        angle = scan.angle_min
+        for r in scan.ranges:
+            # Track global closest valid beam (no cone filter) for debugging.
+            if math.isfinite(r) and scan.range_min <= r <= scan.range_max and r < min_r:
+                min_r = r
+                min_raw_angle = angle
+                min_rel_angle = (angle - _LIDAR_FORWARD_OFFSET + math.pi) % (2.0 * math.pi) - math.pi
+            # Angle relative to robot forward; wrap to (-π, π].
+            rel = (angle - _LIDAR_FORWARD_OFFSET + math.pi) % (2.0 * math.pi) - math.pi
+            if -half_cone <= rel <= half_cone:
+                # Skip invalid measurements
+                if math.isnan(r) or math.isinf(r) or r > scan.range_max or r < scan.range_min:
+                    continue
+                else:
+                    value = r
+                idx = int((half_cone - rel) / bin_width)
+                if idx == _OBSTACLE_BINS:
+                    idx = _OBSTACLE_BINS - 1
+                sums[idx] += value
+                counts[idx] += 1
+            angle += scan.angle_increment
+        if math.isfinite(min_r):
+            log_throttled(
+                self._ros_logger, self._node, f"{self.name}.lidar_min", "debug",
+                f"{self.name}: closest beam r={min_r:.3f}m at scan_angle="
+                f"{min_raw_angle:.3f}rad ({math.degrees(min_raw_angle):.1f}°), "
+                f"rel_to_forward={min_rel_angle:.3f}rad "
+                f"({math.degrees(min_rel_angle):.1f}°)",
+            )
+        return [
+            (sums[i] / counts[i]) if counts[i] > 0 else None
+            for i in range(_OBSTACLE_BINS)
+        ]
+
+    def _set_state(self, new_state: str, detail: str = "") -> None:
+        if new_state == self._state:
+            return
+        self._ros_logger.info(
+            f"{self.name}: state {self._state} → {new_state}"
+            + (f" ({detail})" if detail else "")
+        )
+        self._state = new_state
 
     def initialise(self):
         self._lost_streak = 0
         self._seen_line = False
         self._last = None
+        self._scan = None
+        self._state = "init"
 
     def update(self) -> py_trees.common.Status:
         msg = self._last
 
+        means = self._lidar_snapshot()
+        blocked = any(m is not None and m < _OBSTACLE_DIST for m in means)
+        bin_str = ", ".join(
+            f"b{i}={m:.2f}" if m is not None else f"b{i}=--"
+            for i, m in enumerate(means)
+        )
+        log_throttled(
+            self._ros_logger, self._node, f"{self.name}.lidar", "debug",
+            f"{self.name}: lidar bins [{bin_str}] thresh={_OBSTACLE_DIST:.2f}m "
+            f"→ {'HALT' if blocked else 'go'}",
+        )
+
+        if blocked:
+            self._publish_stop()
+            self._set_state("blocked", f"bins=[{bin_str}]")
+            return py_trees.common.Status.SUCCESS
+
         # No status received yet, wait
         if msg is None:
+            self._set_state("waiting", "no /blue_line yet")
             log_throttled(
                 self._ros_logger, self._node, f"{self.name}.waiting", "debug",
                 f"{self.name}: waiting for /blue_line messages...",
@@ -90,21 +186,14 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
 
         # Lost line - temporary glitch or end of line
         if msg.state == BlueLineStatus.STATE_LOST:
-            prev_streak = self._lost_streak
             self._lost_streak += 1
-            if prev_streak == 0:
-                self._ros_logger.info(
-                    f"{self.name}: line lost (streak=1), coasting "
-                    f"(seen_line={self._seen_line})"
-                )
             if self._seen_line and self._lost_streak >= _END_FRAMES: # End of line
                 self._publish_stop()
-                self._ros_logger.info(
-                    f"{self.name}: line ended after {self._lost_streak} lost frames, SUCCESS"
-                )
+                self._set_state("ended", f"{self._lost_streak} lost frames")
                 return py_trees.common.Status.SUCCESS
             # Coast: zero command while we wait to confirm end-of-line.
             self._publish_stop()
+            self._set_state("coasting", f"streak={self._lost_streak}/{_END_FRAMES}, seen_line={self._seen_line}")
             log_throttled(
                 self._ros_logger, self._node, f"{self.name}.coasting", "debug",
                 f"{self.name}: line lost (streak={self._lost_streak}/{_END_FRAMES}), coasting",
@@ -112,22 +201,14 @@ class FollowBlueLine(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.RUNNING
 
         # Drive according to line offset.
-        if not self._seen_line:
-            self._ros_logger.info(
-                f"{self.name}: first STATE_LINE acquired, "
-                f"offset_right={msg.offset_right:.3f}"
-            )
-        if self._lost_streak > 0:
-            self._ros_logger.info(
-                f"{self.name}: line re-acquired after {self._lost_streak} lost frames"
-            )
+        self._set_state("following", f"offset_right={msg.offset_right:.3f}")
         self._seen_line = True
         self._lost_streak = 0
         cmd = TwistStamped()
         cmd.header.stamp = self._node.get_clock().now().to_msg()
         cmd.twist.linear.x = _FWD_SPEED
         cmd.twist.angular.z = -_KP * float(msg.offset_right)
-        self._cmd_pub.publish(cmd)
+        self._cmd_pub.publish(cmd) 
 
         log_throttled(
             self._ros_logger, self._node, f"{self.name}.driving", "debug",
