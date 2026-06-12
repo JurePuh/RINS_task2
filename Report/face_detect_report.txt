@@ -1,0 +1,30 @@
+Face Detect
+
+Theoretical part
+
+YOLO, short for "You Only Look Once", is a real-time object detection method. Instead of first proposing image regions and then classifying them separately, YOLO processes the whole image in a single forward pass of a neural network. The output is a set of detected objects, where each detection contains a class label, a confidence score, and a bounding box in image coordinates. This makes YOLO suitable for robotic perception tasks because the robot can continuously process camera frames while moving.
+
+In our task, YOLO was used as the first stage of the face/person detection pipeline. The detector receives RGB camera images and searches for visible people/faces in the scene. The important output for the rest of the system is not the image itself, but the position of the detected person in the map. Therefore, the bounding box returned by YOLO is used only as an intermediate result: it tells us where in the image the target is located, and the corresponding depth data is then used to estimate the target's 3D position.
+
+
+Implementation and integration part
+
+The face detection module is implemented as the ROS 2 node `detect_faces`. It loads the YOLO model `yolov8n.pt` and subscribes to two synchronized OAK-D camera streams: the RGB image topic `/oakd/rgb/preview/image_raw` and the depth point cloud topic `/oakd/rgb/preview/depth/points`. The synchronization is needed because the RGB frame and the point cloud must describe approximately the same moment in time.
+
+For every synchronized RGB/depth pair, the RGB image is converted to an OpenCV image and passed through YOLO. The model returns bounding boxes for detected targets. For each bounding box, the node computes the center pixel of the box. This center is used as the representative image point of the detected face/person. The same pixel location is then looked up in the organized point cloud, which gives a 3D point in the camera frame.
+
+The raw 3D point is still expressed relative to the camera, so it cannot be directly used by the navigation system. To integrate the detection with the global map, the node wraps the point into a `PoseStamped` message using the point cloud frame and transforms it into the `map` frame with TF2. After this transform, the module has the estimated global x and y position of the detected person.
+
+To make the detection more robust, the node does not immediately publish every single YOLO detection. New detections are first stored as potential faces. If a detected position is seen repeatedly near the same map location, the module updates a running average. Only after the same target has been observed more than the acceptance threshold is it accepted as a real face/person and assigned an id. Already accepted targets can also be updated and republished if their averaged position changes enough.
+
+Accepted detections are published on the `/face_detect` topic using the custom `FaceDetect` message. The message contains the detected target id and its map position:
+
+`float32 x`
+`float32 y`
+`int8 id`
+
+The movement module subscribes to `/face_detect`. When it receives a new id, it adds the person to the pending people queue and visualizes the position. If an already known id is published again with an updated position, the movement module updates that person's stored position and can recompute the navigation destination if the person is currently the active target.
+
+Overall flow:
+
+RGB frame + depth point cloud -> YOLO detection -> bounding box -> bounding box center pixel -> point cloud lookup -> 3D camera-frame point -> TF2 transform to map frame -> `FaceDetect` message -> `/face_detect` topic -> movement/navigation logic.

@@ -1,53 +1,138 @@
-# Introduction
-## explain what we need to do in task2
+\documentclass[a4paper, 11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{url}
+\geometry{margin=2.5cm}
+
+\title{RINS Task 2 Report}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+In Task 2, the robot had to combine perception, navigation, and decision logic in order to move through the environment and react to objects, people, and anomalies detected by its sensors. The implementation was divided into several modules, where each module solved one part of the full robotic pipeline and communicated with the others through ROS 2 topics and services.
+
+\section{Methods}
+
+\subsection{Face Detection}
+
+YOLO, short for ``You Only Look Once'', is a real-time object detection method. Instead of first proposing image regions and then classifying them separately, YOLO processes the whole image in a single forward pass of a neural network. The output is a set of detected objects, where each detection contains a class label, a confidence score, and a bounding box in image coordinates. This makes YOLO suitable for robotic perception tasks because the robot can continuously process camera frames while moving.
+
+In our task, YOLO was used as the first stage of the face detection pipeline. The detector receives RGB camera images and searches for visible faces in the scene. The important output for the rest of the system is not the image itself, but the position of the detected person in the map. Therefore, the bounding box returned by YOLO is used only as an intermediate result: it tells us where in the image the target is located, and the corresponding depth data is then used to estimate the target's 3D position.
+
+\subsubsection{Destination Compute}
 
 
-# Methods - teoretičen opis kako je stvar delala
-## Face detect
-### Destination compute
+\subsection{Ring Detection}
 
-## Ring detect
-### Destination compute
+\subsubsection{Destination Compute}
 
-## Barrel detect
-### Destination compute
+Text to be added.
 
-## Anomaly detect
-### Navigating along belt
+\subsection{Barrel Detection}
 
-## Follow line
+\subsubsection{Destination Compute}
 
-## Navigation around map and yellow line
+Text to be added.
 
-## Odločitvena logika
+\subsection{Anomaly Detection}
 
+For anomaly detection we used SuperSimpleNet, a neural network designed for visual anomaly detection. The model produces both an image-level anomaly score and a pixel-level anomaly map. The score tells us whether the inspected object should be treated as defective, while the anomaly map localizes the suspicious regions in the image.
 
-# Implementation and integration
-## Ros nodes architecture
+In our case the training was done in a fully supervised setting, because the provided dataset already contained anomaly masks together with the pile images. This means the model did not only learn whether an image was defective, but also had direct pixel-level supervision for where the defect was located. This was important because the final task required both a classification result and a mask that could be included in the generated report.
 
-## Face topic
+The first model was trained on the original dataset. During testing in Gazebo, however, we noticed that the lighting in the simulation made the ceramic piles appear much brighter than they appeared in the dataset. This difference caused a domain shift between the training images and the images seen by the robot. To compensate for this, we reused the already trained model and created an additional augmented dataset where the pile images were brightened. The final model used by the ROS node is the augmented model worked better under the simulated lighting conditions.
 
-## Ring topic
+\subsubsection{Navigating Along Belt}
 
-## Barrel topic
+The anomaly task is executed only when the robot is positioned in front of the belt. The movement module contains fixed approach poses for the red and green belts and a fixed number of tiles for each belt. After navigating to the belt, the robot aligns itself with the wall, moves to the required distance from the belt, turns to face along the belt, and then checks each pile one by one. Between checks it drives a fixed step distance to the next pile position while correcting its lateral distance from the belt. At each fixed pile position the central movement logic calls the anomaly detection service.
 
-## Anomaly service
+\subsection{Follow Line}
 
-## ... Other services/topics
+Text to be added.
 
-# Results
-## Opišemo kaj ni prfektno delal pa kaj smo robustiral da je pol delal prfekt.
+\subsection{Navigation Around Map and Yellow Line}
 
+Text to be added.
 
-# Division of work
-## Who did what
+\subsection{Decision Logic}
 
-## Percentages 30 30 40?
+Text to be added.
 
-# Conclusion
-## I guess če ma kdo kej za povedat?
+\section{Implementation and Integration}
 
-### gazebo skos crashal
+\subsection{ROS Nodes Architecture}
 
+Text to be added.
 
-# Un report k ga generiramo dodat!
+\subsection{Face Detection}
+
+The face detection module is implemented as the ROS 2 node \texttt{detect\_faces}. It loads the YOLO model \texttt{yolov8n.pt} and subscribes to two synchronized OAK-D camera streams: the RGB image topic \path|/oakd/rgb/preview/image_raw| and the depth point cloud topic \path|/oakd/rgb/preview/depth/points|. The synchronization is needed because the RGB frame and the point cloud must describe approximately the same moment in time.
+
+For every synchronized RGB/depth pair, the RGB image is converted to an OpenCV image and passed through YOLO. The model returns bounding boxes for detected targets. For each bounding box, the node computes the center pixel of the box. This center is used as the representative image point of the detected face. The same pixel location is then looked up in the organized point cloud, which gives a 3D point in the camera frame.
+
+The raw 3D point is still expressed relative to the camera, so it cannot be directly used by the navigation system. To integrate the detection with the global map, the node wraps the point into a \texttt{PoseStamped} message using the point cloud frame and transforms it into the \texttt{map} frame with TF2. After this transform, the module has the estimated global \texttt{x} and \texttt{y} position of the detected person.
+
+To make the detection more robust, the node does not immediately publish every single YOLO detection. New detections are first stored as potential faces. If a detected position is seen repeatedly near the same map location, the module updates a running average. Only after the same target has been observed more than the acceptance threshold is it accepted as a real face and assigned an id. Already accepted targets can also be updated and republished if their averaged position changes enough.
+
+Accepted detections are published on the \texttt{/face\_detect} topic using the custom \texttt{FaceDetect} message. The message contains the detected target id and its map position:
+
+\begin{verbatim}
+float32 x
+float32 y
+int8 id
+\end{verbatim}
+
+The movement module subscribes to \texttt{/face\_detect}. When it receives a new id, it adds the person to the pending people queue and visualizes the position. If an already known id is published again with an updated position, the movement module updates that person's stored position and can recompute the navigation destination if the person is currently the active target.
+
+\subsection{Ring Detection}
+
+Text to be added.
+
+\subsection{Barrel Detection}
+
+Text to be added.
+
+\subsection{Anomaly Detection}
+
+The anomaly detection module is implemented as the ROS 2 node \texttt{detect\_anomalies}. Unlike the face detector, it does not continuously publish detections. Instead, it exposes the service \texttt{/detect\_anomalies}. This service is called by the central movement module only when the robot has reached the correct fixed position in front of a pile.
+
+The node subscribes to the top camera image topic \path|/top_camera/rgb/preview/image_raw| and always keeps the latest received frame. When the service is called, the node waits for an available frame, converts it to an OpenCV BGR image, and runs the pile extraction and anomaly detection pipeline on that image.
+
+The first step is to find the pile in the top camera image. The implementation converts the image to grayscale, optionally applies Gaussian blur, and then creates a binary mask using a fixed intensity threshold. After thresholding, a morphological closing operator with an elliptical kernel is applied to fill small holes and connect nearby bright regions. A border strip is removed from the mask to avoid selecting objects at the image edge.
+
+The pile corners are then estimated from the binary mask. The node finds the external contours and selects the largest contour above a minimum area. It computes the convex hull of that contour and tries to approximate it with four points using \texttt{approxPolyDP} with increasing approximation tolerances.
+
+After the four pile corners are known, the module uses a homography to normalize the pile image. The source quadrilateral from the camera image is mapped to a square output image with \texttt{getPerspectiveTransform} and \texttt{warpPerspective}. This gives the anomaly model a consistent square view of the pile, independent of the viewing angle in the top camera. Before inference, the detector also normalizes image brightness in LAB color space.
+
+The warped pile image is passed to the SuperSimpleNet inference wrapper. The model returns an anomaly score, a binary anomaly mask, and a continuous anomaly map. If the score is above the configured threshold, the service returns \texttt{defected}; otherwise it returns \texttt{not\_defected}. If the pile cannot be found or inference fails, the service returns \texttt{not\_found}. The service response also includes paths to saved images: the warped pile image and the generated anomaly mask. The movement module stores this result for the corresponding tile, and the report-generation module can later include the saved image and mask for defective tiles.
+
+\subsection{Other Services and Topics}
+
+Text to be added.
+
+\section{Results}
+
+Text to be added.
+
+\section{Division of Work}
+
+\subsection{Who Did What}
+
+Text to be added.
+
+\subsection{Percentages}
+
+Text to be added.
+
+\section{Conclusion}
+
+Text to be added.
+
+\end{document}

@@ -22,7 +22,7 @@ detect_barrel_cpp:
     dedup_distance_m: 0.40
     dedup_distance_m.black: 3.0
     dedup_distance_m.red: 2.0
-    dedup_distance_m.green: 0.4
+    dedup_distance_m.green: 0.5
     dedup_distance_m.yellow: 5.0
     dedup_distance_m.blue: 5.0
     max_confirmed_tracks.black: 2
@@ -100,7 +100,7 @@ detect_barrel_cpp:
     leak_search_padding_px: 60
     leak_mask_morph_open_kernel: 3
     leak_mask_morph_close_kernel: 7
-    leak_min_area_px: 400.0
+    leak_min_area_px: 300.0
     leak_max_area_px: 20000.0
     leak_min_fill_ratio: 0.30
     leak_min_circularity: 0.18
