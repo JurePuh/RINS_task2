@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1781275420.64004 "/home/puhster/Desktop/RINS_task2/Report/report.tex" "report.pdf" "report" 1781275420.77944 0
+["pdflatex"] 1781302256.06007 "report.tex" "report.pdf" "report" 1781302256.26899 0
   "/etc/texmf/web2c/texmf.cnf" 1781269874.05491 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecbx1095.600pk" 1781271995.74867 28952 833f2c527f90be2bfb5b8076f7d07ecf ""
   "/home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecbx1200.600pk" 1781271996.17775 31928 9cf5333d8e9663e1cf76750311bcda02 ""
@@ -7,7 +7,6 @@
   "/home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm1095.600pk" 1781271996.60405 26208 9260d42b3970de9097ed06a3e0e201d5 ""
   "/home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm1728.600pk" 1781271997.30684 42496 a50e414df1a1aafec734fa0f0445ace0 ""
   "/home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1095.600pk" 1781271995.39666 21952 23b19084ad303d4cf8d1011197308239 ""
-  "/home/puhster/Desktop/RINS_task2/Report/report.tex" 1781275420.47995 9583 794e75188958d151263fcc9305119b0f ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/ecbx1095.tfm" 1136768653 3584 21b378cca2e40816b0e6d74a4dc98f04 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/ecbx1200.tfm" 1136768653 3584 402da0b29eafbad07963b1224b222f18 ""
@@ -43,8 +42,8 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1707919699 40399 f2c302f7d2af602abb742093540a5834 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1781270586.26234 128028 f533b797fba58d231669ea19e894e23e ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1781270589 6800789 c4e5d2ce6f4af5fa0543add8977b274a ""
-  "report.aux" 1781275420.75695 2761 4b71167516c320a8e877a1d96e75539a "pdflatex"
-  "report.tex" 1781275420.47995 9583 794e75188958d151263fcc9305119b0f ""
+  "report.aux" 1781302256.2459 2985 233bb02fd2a11c51b430d5f15122971f "pdflatex"
+  "report.tex" 1781302251.86035 12159 09c1bc20d0b394ed7201705420211bf6 ""
   (generated)
   "report.aux"
   "report.log"

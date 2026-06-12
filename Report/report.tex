@@ -29,6 +29,14 @@ In our task, YOLO was used as the first stage of the face detection pipeline. Th
 \subsubsection{Destination Compute}
 
 
+\subsection{Face Classification}
+
+Face classification was used after the robot had already detected and approached a person. The goal of this module was not to estimate the person's position, but to identify which known person was in front of the robot and to retrieve their role and gender information for the later decision logic and conversation.
+
+The method is based on face embeddings. A face embedding is a compact numerical representation of a face image. Images of the same person should produce similar embeddings, while images of different people should be farther apart in the embedding space. In our implementation, a FaceNet-style model, \texttt{InceptionResnetV1} pretrained on VGGFace2, is used to compute these embeddings.
+
+For classification, the embedding computed from the live camera image is compared with precomputed embeddings stored in the personnel database. The nearest stored embedding is selected using Euclidean distance. The selected entry gives the person's name, role, and gender.
+
 \subsection{Ring Detection}
 
 \subsubsection{Destination Compute}
@@ -47,7 +55,7 @@ For anomaly detection we used SuperSimpleNet, a neural network designed for visu
 
 In our case the training was done in a fully supervised setting, because the provided dataset already contained anomaly masks together with the pile images. This means the model did not only learn whether an image was defective, but also had direct pixel-level supervision for where the defect was located. This was important because the final task required both a classification result and a mask that could be included in the generated report.
 
-The first model was trained on the original dataset. During testing in Gazebo, however, we noticed that the lighting in the simulation made the ceramic piles appear much brighter than they appeared in the dataset. This difference caused a domain shift between the training images and the images seen by the robot. To compensate for this, we reused the already trained model and created an additional augmented dataset where the pile images were brightened. The final model used by the ROS node is the augmented model worked better under the simulated lighting conditions.
+The first model was trained on the original dataset. During testing in Gazebo, however, we noticed that the lighting in the simulation made the ceramic piles appear much brighter than they appeared in the dataset. This difference caused a domain shift between the training images and the images seen by the robot. To compensate for this, we reused the already trained model and created an additional augmented dataset where the pile images were brightened. The final model used by the ROS node is the augmented model, which worked better under the simulated lighting conditions.
 
 \subsubsection{Navigating Along Belt}
 
@@ -90,6 +98,18 @@ int8 id
 \end{verbatim}
 
 The movement module subscribes to \texttt{/face\_detect}. When it receives a new id, it adds the person to the pending people queue and visualizes the position. If an already known id is published again with an updated position, the movement module updates that person's stored position and can recompute the navigation destination if the person is currently the active target.
+
+\subsection{Face Classification}
+
+The face classification module is implemented as the ROS 2 node \texttt{classify\_face}. It exposes the service \texttt{/classify\_face}, which is called by the central movement module when the robot is close enough to a detected person.
+
+The node subscribes to the OAK-D RGB image topic \path|/oakd/rgb/preview/image_raw| and keeps the latest frame. When the service is called, it collects several fresh frames, with ten samples used by default. For each frame, the image is converted to OpenCV format and YOLO is run with class \texttt{0}, corresponding to a person. The first detected bounding box is cropped from the image and used as the input for face embedding.
+
+The crop is passed through \texttt{InceptionResnetV1}. The resulting embedding is compared to all entries in \texttt{personnel\_embeddings\_dict.py}. The nearest match is selected using Euclidean distance.
+
+To make the result more stable, the module does not rely on only one frame. It repeats the detection and embedding process over multiple samples and stores a vote for the nearest matching person in each frame. The final identity is chosen by majority vote. If no person is detected in the first frame, or if no valid match is found in any frame, the service returns \texttt{success = false}.
+
+On success, the service returns the matched name, role, gender, and a message describing how many samples voted for the selected identity. The movement module stores this information in the current pending person and updates the visualization label.
 
 \subsection{Ring Detection}
 
