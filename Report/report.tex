@@ -4,10 +4,17 @@
 \usepackage[T1]{fontenc}
 \usepackage{geometry}
 \usepackage{url}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{wrapfig}
+\usepackage{float}
 \geometry{margin=2.5cm}
 
-\title{RINS Task 2 Report}
-\author{}
+% All figures point to this dummy image for now. Swap individual paths later.
+\newcommand{\dummyfig}{/Users/blaz/LOCAL/lFaks/RInS/Project2/Report/img/face_detection/face_detection.png}
+
+\title{RINS Task 2 Report \\[2pt] \large Team Name Placeholder}
+\author{Student One \and Student Two \and Student Three}
 \date{}
 
 \begin{document}
@@ -16,18 +23,101 @@
 
 \section{Introduction}
 
-In Task 2, the robot had to combine perception, navigation, and decision logic in order to move through the environment and react to objects, people, and anomalies detected by its sensors. The implementation was divided into several modules, where each module solved one part of the full robotic pipeline and communicated with the others through ROS 2 topics and services.
+This report covers Task 2 of the RINS 2026 project, which combines perception,
+navigation and decision logic into one pipeline running across two rooms.
+
+\subsection{The Task}
+
+The robot starts in the \textbf{first room} and drives through it looking for people.
+When it finds someone, it greets them and asks for a task.
+
+\paragraph{The four tasks.}
+A person hands out one of four jobs: count \textbf{rings}, inspect \textbf{barrels}, or
+detect \textbf{anomalies} on the red or the green cell. Counting rings means remembering
+every ring seen in the first room together with its color. Inspecting barrels means
+remembering every barrel, its color and whether it lies horizontal, then driving closer
+to any horizontal one to check it for a leak; a leaking barrel is announced out loud.
+Detecting anomalies means driving to the belt with the matching colored line, raising
+the camera, and inspecting every tile for defects.
+
+\paragraph{The no go zone.}
+A yellow line in the first room marks a no go zone. The robot must never cross it, which
+constrains every path it plans there.
+
+\paragraph{The second room.}
+Once the first room is searched and the assigned tasks are done, the robot moves to the
+entrance of the second room, picks up a blue line, and follows it through its
+intersections until it reaches the \textbf{CTO}, who stands next to the line.
+
+\paragraph{The report.}
+Reaching the CTO triggers the report. It gives the ring count and the per color counts;
+a table of every barrel with its color, a horizontal flag and a leaking flag, plus a
+picture of each leaking barrel; and a table of every inspected tile with a defect flag,
+plus the tile image and its anomaly mask for the defective ones. Each task also records
+who asked for it.
 
 \section{Methods}
 
 \subsection{Face Detection}
 
-YOLO, short for ``You Only Look Once'', is a real-time object detection method. Instead of first proposing image regions and then classifying them separately, YOLO processes the whole image in a single forward pass of a neural network. The output is a set of detected objects, where each detection contains a class label, a confidence score, and a bounding box in image coordinates. This makes YOLO suitable for robotic perception tasks because the robot can continuously process camera frames while moving.
+\textbf{YOLO} runs the whole image through a single network pass and returns boxes, each
+with a class, a confidence and image coordinates. That single pass is what lets the
+robot detect faces while it keeps moving. We use the box only as a pointer: it tells us
+where the face sits in the image, and we read the matching \textbf{depth} to lift that
+pixel into a 3D position on the map. The position is what the rest of the system needs,
+not the picture.
 
-In our task, YOLO was used as the first stage of the face detection pipeline. The detector receives RGB camera images and searches for visible faces in the scene. The important output for the rest of the system is not the image itself, but the position of the detected person in the map. Therefore, the bounding box returned by YOLO is used only as an intermediate result: it tells us where in the image the target is located, and the corresponding depth data is then used to estimate the target's 3D position.
+\subsubsection{Calculating the Face Destination}\label{sec:facedest}
 
-\subsubsection{Destination Compute}
+\begin{wrapfigure}{r}{0.30\textwidth}
+  \centering
+  \includegraphics[width=0.28\textwidth]{\dummyfig}
+  \caption{Direct approach fails at a shallow angle.}
+  \label{fig:direct_fail}
+\end{wrapfigure}
 
+To start a conversation the robot must stop in front of a face. Our first goal was a
+point 40\,cm ahead of the face along the \emph{robot to face line}. Head on that works,
+but at a shallow angle it drops the goal beside the face or into the wall: the robot
+stalls and rarely ends up turned at the person (Figure~\ref{fig:direct_fail}). The
+quantity that fixes this is the \textbf{wall normal}, so the rest of this section
+computes it and turns it into a goal.
+
+\paragraph{Wall normal.}
+We tried the lidar first, and it was too fragile near corners and partial occlusions.
+Instead we read the wall from the \textbf{occupancy grid} the robot already keeps for
+navigation, whose cells are \emph{free}, \emph{occupied} or \emph{unknown} and stay
+steadier than any single scan.
+
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Ray cast versus BFS to the wall.}
+  \label{fig:raycast}
+\end{wrapfigure}
+
+To pick the right wall we cast a \textbf{ray} from the robot toward the face and take the
+first free to occupied transition as its surface (Figure~\ref{fig:raycast}). A breadth
+first search would be wrong here: if the face sits just past the wall, the nearest
+occupied cell can be the far side of that same wall, while the ray always hits the side
+the robot will see.
+
+We fit the 7 nearest wall cells with \textbf{RANSAC}, which shrugs off the stray cells at
+a corner, and get a wall direction $\mathbf d=(d_x,d_y)$. The 2D normal is the in plane
+perpendicular, from a cross product against the vertical axis $\hat{\mathbf z}$:
+\[ \mathbf n = \mathbf d \times \hat{\mathbf z} = (d_y,\,-d_x,\,0). \]
+Dropping the zero component leaves $\mathbf n=(d_y,-d_x)$, flipped to point out of the
+wall toward the robot.
+
+\paragraph{Goal.}
+The stopping \textbf{goal} pushes the face point out along this normal, facing back into
+the wall:
+\[ \mathbf p_{\text{goal}} = \mathbf p_{\text{face}} + d_{\text{stop}}\,\hat{\mathbf n},
+\qquad \theta_{\text{goal}} = \operatorname{atan2}(-n_y,\,-n_x), \]
+where $\mathbf p_{\text{face}}$ is the face position, $d_{\text{stop}}=0.4$\,m is the
+stopping distance, and $\hat{\mathbf n}$ is the unit wall normal. The heading
+$\theta_{\text{goal}}$ makes the robot arrive looking straight at the person from any
+approach angle.
 
 \subsection{Face Classification}
 
@@ -39,65 +129,289 @@ For classification, the embedding computed from the live camera image is compare
 
 \subsection{Ring Detection}
 
-\subsubsection{Destination Compute}
-
 Text to be added.
 
 \subsection{Barrel Detection}
 
-\subsubsection{Destination Compute}
+\subsubsection{Detection}
 
 Text to be added.
+
+\subsubsection{Computing Inspection Goals}\label{sec:barrelgoals}
+
+\begin{wrapfigure}{r}{0.33\textwidth}
+  \centering
+  \includegraphics[width=0.31\textwidth]{\dummyfig}
+  \caption{Inspection goals around a horizontal barrel.}
+  \label{fig:barrel_goals}
+\end{wrapfigure}
+
+A leak shows up on the \textbf{top or bottom face} of a horizontal barrel, so the robot
+needs a clean view of one of them. Seen from above the barrel is symmetric about both
+axes, and we know its orientation only up to that symmetry. That is fine: it leaves four
+equally good viewing spots, one off each corner, each looking straight at a top or
+bottom face (Figure~\ref{fig:barrel_goals}).
+
+\paragraph{Four goals.}
+We already have the barrel center and orientation from detection, so we build the four
+goals by shifting the center along the orientation vector and the vector perpendicular to
+it:
+\[ \mathbf p_{ij} = \mathbf c + i\,a\,\hat{\mathbf u} + j\,b\,\hat{\mathbf v},
+\qquad i,j \in \{+1,-1\}, \]
+with $\mathbf c$ the center, $\hat{\mathbf u}$ the unit orientation along the barrel
+axis, $\hat{\mathbf v}$ the unit perpendicular, and $a, b$ the offsets along and across.
+At each goal the robot faces the center with an adjustable offset $\varphi$ so the camera
+lines up with a top or bottom face:
+\[ \theta_{ij} = \operatorname{atan2}(c_y - p_{ij,y},\, c_x - p_{ij,x}) + \varphi. \]
+
+\paragraph{Pruning.}
+Some goals land inside a wall or too close to one to be useful. For each goal we measure
+the distance to the nearest wall and drop it if that distance is too small or the goal
+sits in a wall. The robot visits whatever survives.
 
 \subsection{Anomaly Detection}
 
-For anomaly detection we used SuperSimpleNet, a neural network designed for visual anomaly detection. The model produces both an image-level anomaly score and a pixel-level anomaly map. The score tells us whether the inspected object should be treated as defective, while the anomaly map localizes the suspicious regions in the image.
+\textbf{SuperSimpleNet} gives us both an image level anomaly score and a pixel level
+anomaly map: the score decides whether a tile is defective, the map shows where. We
+trained it fully supervised, since the dataset shipped with anomaly masks, so the model
+learned the defect location directly, which the report needs as a mask.
 
-In our case the training was done in a fully supervised setting, because the provided dataset already contained anomaly masks together with the pile images. This means the model did not only learn whether an image was defective, but also had direct pixel-level supervision for where the defect was located. This was important because the final task required both a classification result and a mask that could be included in the generated report.
+The first model was trained on the raw dataset. In Gazebo the simulated lighting made the
+ceramic tiles much brighter than the training images, a \textbf{domain shift} that hurt
+detection. We brightened the tile images into an augmented dataset, retrained from the
+existing model, and the augmented model held up under the simulator's lighting. That is
+the model the node runs.
 
-The first model was trained on the original dataset. During testing in Gazebo, however, we noticed that the lighting in the simulation made the ceramic piles appear much brighter than they appeared in the dataset. This difference caused a domain shift between the training images and the images seen by the robot. To compensate for this, we reused the already trained model and created an additional augmented dataset where the pile images were brightened. The final model used by the ROS node is the augmented model, which worked better under the simulated lighting conditions.
+\subsubsection{Navigating Along the Belt}\label{sec:belt}
 
-\subsubsection{Navigating Along Belt}
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Line fit to the left scan cone.}
+  \label{fig:belt}
+\end{wrapfigure}
 
-The anomaly task is executed only when the robot is positioned in front of the belt. The movement module contains fixed approach poses for the red and green belts and a fixed number of tiles for each belt. After navigating to the belt, the robot aligns itself with the wall, moves to the required distance from the belt, turns to face along the belt, and then checks each pile one by one. Between checks it drives a fixed step distance to the next pile position while correcting its lateral distance from the belt. At each fixed pile position the central movement logic calls the anomaly detection service.
+Along the belt we publish velocities straight to \path|/cmd_vel| and skip nav2. This
+close to the wall, localization drifts, so a map pose would be unreliable; instead we
+read the belt straight from the \textbf{lidar}, which stays accurate at short range.
 
-\subsection{Follow Line}
+\paragraph{Line fit.}
+nav2 brings the robot to a fixed keypoint at the head of the belt. From there we fit a
+line with \textbf{RANSAC} to the 90 degree scan cone on the robot's left, since the belt
+runs along that side (Figure~\ref{fig:belt}). The fit hands back the perpendicular
+distance to the belt and the belt's orientation in the robot frame, which we use to set
+the exact distance from the belt and to turn precisely perpendicular before the run.
 
-Text to be added.
+\paragraph{PD wall following.}
+We poll the distance every controller tick and steer with a PD law:
+\[ e = d_{\text{true}} - d_{\text{target}},
+\qquad \omega = K_P\, e + K_D\, \frac{e - e_{\text{prev}}}{\Delta t}, \]
+where $d_{\text{true}}$ is the measured perpendicular distance, $d_{\text{target}}$ the
+distance we want to hold, $e_{\text{prev}}$ the previous tick's error, $\Delta t$ the
+tick period, and $K_P, K_D$ the gains. When the robot drifts away from the belt
+$d_{\text{true}}$ grows past $d_{\text{target}}$, the error turns positive, and $\omega$
+steers it back toward the belt; drift too close and the error goes negative and pushes it
+out again. The D term damps the correction, so the robot holds a straight line instead of
+weaving. We call the anomaly service at fixed distance steps as we move down the belt.
 
-\subsection{Navigation Around Map and Yellow Line}
+\subsection{Follow Line}\label{sec:followline}
 
-Text to be added.
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Two sample rows; the line mask is drawn in black.}
+  \label{fig:line_rows}
+\end{wrapfigure}
 
-\subsection{Decision Logic}
+The top camera is raised to look down at the floor just in front of the robot. The robot
+drives along the line, and at a crossroad it always turns right. When the line ends or an
+obstacle blocks the way ahead, it turns around and drives back.
 
-Text to be added.
+\paragraph{Keying the line.}
+We key the \textbf{blue} of the line on two rows of the image, one close to the robot and
+one further ahead (Figure~\ref{fig:line_rows}, where the keyed line is drawn in black).
+To make the mask robust we apply a \emph{closing}, a dilation followed by an erosion,
+which fills small gaps and leaves one solid segment per row.
+
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Right edge holds as the line splits (line in black).}
+  \label{fig:v_right}
+\end{wrapfigure}
+
+\paragraph{Steering with PD.}
+We steer with a PD law whose terms come from the image:
+\[ e_P = c - x_{\text{near}},
+\qquad e_D = x^{R}_{\text{near}} - x^{R}_{\text{far}},
+\qquad \omega = K_P\, e_P + K_D\, e_D, \]
+where $c$ is the image center column, $x_{\text{near}}$ is the center of the followed
+segment on the near row, and $x^{R}_{\text{near}}, x^{R}_{\text{far}}$ are the right edges
+of that segment on the near and far rows. The idea matches the belt controller, so we do
+not repeat it.
+
+\paragraph{Why the right edge.}
+With the P term alone the robot jumps a little at every crossroad and never drives
+smoothly, which is why we added the D term. But the D term has to be read carefully. At a
+crossroad the line first thickens and then splits in two. Measured from the segment
+centers, the center jumps the moment the front line splits from one thick blob into two,
+which is exactly the jump we were removing. The \textbf{right edge} does not move when the
+line splits (Figure~\ref{fig:v_right}), so tracking it keeps the D term smooth.
+
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Approaching a junction from the top (line in black).}
+  \label{fig:v_top}
+\end{wrapfigure}
+
+\paragraph{Junctions from the top.}
+Approaching a junction from the top, the other arm shows up on the robot's right
+(Figure~\ref{fig:v_top}). Since the robot follows the rightmost line, it would snap into a
+sharp right turn. We reject that arm by requiring a newly detected segment to stay within
+$n$ pixels of the segment we are already following.
+
+\paragraph{Obstacles ahead.}
+We also watch the lidar like a \textbf{sonar}. We split the 90 degree cone in front of the
+robot into 7 bins and average the range in each. If any bin reads too close, the robot
+turns around.
+
+\subsection{Navigation Around Map and Yellow Line}\label{sec:navmap}
+
+The robot moves around the first room through a predefined set of poses, each with a
+position and an orientation, driven by nav2. Getting it smooth took some tuning, so it is
+worth a quick look at how the nav2 controller actually drives.
+
+\begin{wrapfigure}{r}{0.32\textwidth}
+  \centering
+  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \caption{Carrot on the planned path.}
+  \label{fig:carrot}
+\end{wrapfigure}
+
+\paragraph{Carrots and candidate paths.}
+The controller samples several candidate trajectories on each cycle, seeded from the
+previous path so it never scores complete nonsense, and the cost function picks the best
+one. The robot does not track that path exactly, since it jitters slightly between
+samples. Instead it chases a \textbf{carrot} placed on the path at a fixed lookahead
+distance (Figure~\ref{fig:carrot}), which keeps the motion smooth.
+
+\paragraph{Inflation and braking.}
+The robot kept braking hard near the inflated walls in the costmap, and worse, if it
+strayed onto the inflated area by mistake it refused to drive forward and got stuck. Our
+localization was accurate, so we turned off the nav2 collision checking and shrank the
+inflation a lot, which removed both problems without real risk.
+
+\paragraph{Carrot distance.}
+The lookahead was also too long. In tight spaces the carrot pulled the robot over the
+inflated edge instead of hugging the path, which was the other reason it got stuck in
+corners. We made the lookahead \textbf{scale with speed}: slow means follow the path
+almost exactly, fast means more room to maneuver. The shorter carrot at low speed cleared
+the tight corners.
+
+\paragraph{Keep out zones.}
+The yellow no go zone needed a real mechanism. We built a second map, shaped like the
+navigation map, that marks everything inside the yellow lines as a \textbf{keep out zone},
+and fed it into the cost function. Every planned path then routes around the keep out
+areas on its own.
+
+\subsection{Decision Logic}\label{sec:decision}
+
+For the first task a small \textbf{state machine} was enough, with three states:
+\texttt{FollowPath}, \texttt{VisitSubject} and \texttt{GreetSubject}. The second task is
+far more tangled, and a flat state machine stops being readable, so we moved to
+\texttt{py\_trees\_ros} and built a \textbf{behaviour tree}.
+
+\paragraph{Behaviours.}
+A behaviour is a leaf of the tree. On every tick (10\,Hz) it does a slice of work and
+returns one of three results: \emph{Running} if it needs more ticks, \emph{Success} if it
+is done, or \emph{Failure} if it cannot finish.
+
+\paragraph{Sequences.}
+A sequence is an inner node holding an ordered list of children. It runs the first child,
+and only when that child returns \emph{Success} does it move to the next; a
+\emph{Failure} stops the whole sequence there. A sequence can hold behaviours or other
+sequences, so the tree is built by nesting sequences of behaviours. A memory flag decides
+whether a sequence re-checks its children from the start on every tick or resumes where it
+left off.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.6\textwidth]{\dummyfig}
+  \caption{Example sequence: visiting a detected face.}
+  \label{fig:btree}
+\end{figure}
+
+\paragraph{Why it helped.}
+This made debugging direct: a failure points at the exact behaviour that caused it. It
+also made the code reusable, since many sequences share the same ``go to position X''
+behaviours, so we wrote each piece once and tested it everywhere. As an example, the
+sequence that visits a detected face chains three behaviours: drive to the goal from the
+wall normal, run the conversation, and mark the chosen task active
+(Figure~\ref{fig:btree}).
 
 \section{Implementation and Integration}
 
 \subsection{ROS Nodes Architecture}
 
-Text to be added.
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\textwidth]{\dummyfig}
+  \caption{The ROS node and topic graph, from \texttt{rqt\_graph}.}
+  \label{fig:rqt}
+\end{figure}
 
-\subsection{Face Detection}
+The \textbf{movement} node is the central controller and holds the decision logic of
+Section~\ref{sec:decision}; every other node feeds it or serves it. Figure~\ref{fig:rqt}
+shows the full graph.
 
-The face detection module is implemented as the ROS 2 node \texttt{detect\_faces}. It loads the YOLO model \texttt{yolov8n.pt} and subscribes to two synchronized OAK-D camera streams: the RGB image topic \path|/oakd/rgb/preview/image_raw| and the depth point cloud topic \path|/oakd/rgb/preview/depth/points|. The synchronization is needed because the RGB frame and the point cloud must describe approximately the same moment in time.
+\paragraph{Perception nodes.}
+\texttt{detect\_faces} publishes faces on \path|/face_detect|, \texttt{detect\_rings}
+publishes rings on \path|/ring_detect|, the barrel detector publishes \texttt{BarrelDetect}
+messages, and \texttt{anomaly\_detection} exposes the \texttt{detect\_anomalies} service.
 
-For every synchronized RGB/depth pair, the RGB image is converted to an OpenCV image and passed through YOLO. The model returns bounding boxes for detected targets. For each bounding box, the node computes the center pixel of the box. This center is used as the representative image point of the detected face. The same pixel location is then looked up in the organized point cloud, which gives a 3D point in the camera frame.
+\paragraph{Geometry services.}
+\texttt{map\_query} serves \texttt{wall\_normal\_at} for faces and \texttt{nearest\_wall}
+for barrel goals, \texttt{line\_fit} serves \texttt{line\_fit\_in\_direction} for the
+belt, and \texttt{blue\_line} publishes \texttt{BlueLineStatus} on \path|/blue_line|.
 
-The raw 3D point is still expressed relative to the camera, so it cannot be directly used by the navigation system. To integrate the detection with the global map, the node wraps the point into a \texttt{PoseStamped} message using the point cloud frame and transforms it into the \texttt{map} frame with TF2. After this transform, the module has the estimated global \texttt{x} and \texttt{y} position of the detected person.
+\paragraph{Interaction.}
+\texttt{conversation} serves \texttt{converse\_person}, \texttt{classify\_face} serves
+\texttt{classify\_face}, and \texttt{speak} listens on \path|/speak| and voices whatever
+is published there.
 
-To make the detection more robust, the node does not immediately publish every single YOLO detection. New detections are first stored as potential faces. If a detected position is seen repeatedly near the same map location, the module updates a running average. Only after the same target has been observed more than the acceptance threshold is it accepted as a real face and assigned an id. Already accepted targets can also be updated and republished if their averaged position changes enough.
+\subsection{Face Detection}\label{sec:impl_face}
 
-Accepted detections are published on the \texttt{/face\_detect} topic using the custom \texttt{FaceDetect} message. The message contains the detected target id and its map position:
+\textbf{detect\_faces} subscribes to the synchronized OAK-D RGB image and depth point
+cloud, so each pair shares a moment in time. It runs YOLO on the RGB image, takes the
+center pixel of each box, looks that pixel up in the organized point cloud for a 3D point
+in the camera frame, then wraps it in a \texttt{PoseStamped} and transforms it to the
+\texttt{map} frame with TF2.
 
+To avoid publishing noise, the node holds new detections as candidates and keeps a
+\textbf{running average} of each position. A candidate becomes a real face only after it
+has been seen past an acceptance threshold, at which point it gets an id. Accepted faces
+are published on \path|/face_detect| as \texttt{FaceDetect}:
 \begin{verbatim}
 float32 x
 float32 y
 int8 id
 \end{verbatim}
 
-The movement module subscribes to \texttt{/face\_detect}. When it receives a new id, it adds the person to the pending people queue and visualizes the position. If an already known id is published again with an updated position, the movement module updates that person's stored position and can recompute the navigation destination if the person is currently the active target.
+\paragraph{Visiting and greeting.}
+\textbf{movement} subscribes to \path|/face_detect| and queues each new id. To visit one
+it calls \texttt{wall\_normal\_at} on \texttt{map\_query}, passing the face and robot
+positions; the service returns the wall point and its normal
+(Section~\ref{sec:facedest}). movement turns those into the 40\,cm stopping goal, sends it
+to nav2, and on arrival calls \texttt{converse\_person} on \texttt{conversation}. That
+service takes the person's gender and returns the chosen \textbf{task} string, which
+movement marks active.
+
+\paragraph{Re-driving and fallback.}
+If \texttt{detect\_faces} republishes the same id, the true face has moved, so movement
+recomputes the goal from the new position. If \texttt{wall\_normal\_at} reports no usable
+wall, movement falls back to the direct robot to face approach from
+Section~\ref{sec:facedest}.
 
 \subsection{Face Classification}
 
@@ -113,29 +427,70 @@ On success, the service returns the matched name, role, gender, and a message de
 
 \subsection{Ring Detection}
 
-Text to be added.
+\textbf{detect\_rings} publishes each ring on \path|/ring_detect| as \texttt{RingDetect},
+which carries the position, an id and a color. movement does little at drive time: it
+records where each ring was seen and its color, and keeps them for the report.
 
 \subsection{Barrel Detection}
 
-Text to be added.
+The barrel detector publishes \texttt{BarrelDetect} for every barrel it sees, whether or
+not a task is active. The message carries the position and normal, an id, the color, a
+horizontal flag, a leaking flag and a path to a saved image.
+
+\paragraph{Visiting horizontal barrels.}
+Once a person sets the barrel task active, movement visits every horizontal barrel it has
+stored, and any new one it later sees. For each candidate goal around a barrel
+(Section~\ref{sec:barrelgoals}) it calls \texttt{nearest\_wall} on \texttt{map\_query},
+which returns the closest wall point; movement keeps the goal only if that point is far
+enough away. It then drives to a surviving goal with nav2.
+
+\paragraph{Announcing a leak.}
+On arrival the detector re-sends a \texttt{BarrelDetect} with the leaking flag set if the
+barrel is leaking, with no service call needed. When movement sees that flag it publishes
+to \path|/speak| and the \texttt{speak} node says the warning out loud. The image path is
+stored for the report.
 
 \subsection{Anomaly Detection}
 
-The anomaly detection module is implemented as the ROS 2 node \texttt{detect\_anomalies}. Unlike the face detector, it does not continuously publish detections. Instead, it exposes the service \texttt{/detect\_anomalies}. This service is called by the central movement module only when the robot has reached the correct fixed position in front of a pile.
+When a person sets a red or green anomaly task active, movement drives to a fixed keypoint
+at the belt with nav2, then takes over on \path|/cmd_vel|: it uses the lidar line fit to
+set its distance and turn perpendicular (Section~\ref{sec:belt}), drives down the belt,
+and calls \texttt{detect\_anomalies} every fixed step. Each call returns a result and the
+paths to a saved tile image and mask, which movement stores per tile for the report.
 
-The node subscribes to the top camera image topic \path|/top_camera/rgb/preview/image_raw| and always keeps the latest received frame. When the service is called, the node waits for an available frame, converts it to an OpenCV BGR image, and runs the pile extraction and anomaly detection pipeline on that image.
+\paragraph{The detector.}
+\textbf{anomaly\_detection} keeps the latest top camera frame and acts only when its
+\texttt{detect\_anomalies} service is called. It first finds the \textbf{tile}: grayscale,
+a fixed intensity threshold, a morphological closing to fill gaps, and a border strip
+removed so edge objects are ignored. It takes the largest contour, its convex hull, and
+approximates four corners with \texttt{approxPolyDP}. A \textbf{homography} then warps that
+quad to a square, so the model always sees the tile head on, and LAB brightness
+normalization evens out lighting. The square goes to SuperSimpleNet, and the score against
+a threshold decides \texttt{defected}, \texttt{not\_defected}, or \texttt{not\_found} when
+no tile is found. The response carries the saved tile and mask paths.
 
-The first step is to find the pile in the top camera image. The implementation converts the image to grayscale, optionally applies Gaussian blur, and then creates a binary mask using a fixed intensity threshold. After thresholding, a morphological closing operator with an elliptical kernel is applied to fill small holes and connect nearby bright regions. A border strip is removed from the mask to avoid selecting objects at the image edge.
+\subsection{Line Following}
 
-The pile corners are then estimated from the binary mask. The node finds the external contours and selects the largest contour above a minimum area. It computes the convex hull of that contour and tries to approximate it with four points using \texttt{approxPolyDP} with increasing approximation tolerances.
+\textbf{blue\_line} does the vision and publishes \texttt{BlueLineStatus} on
+\path|/blue_line|: a state that is \texttt{LOST}, \texttt{LINE} or \texttt{CROSSROAD},
+with the line's left and right offsets. movement turns the offsets into the P and D terms
+of Section~\ref{sec:followline}, turns right on \texttt{CROSSROAD}, and turns around on
+\texttt{LOST} or when the obstacle bins read too close.
 
-After the four pile corners are known, the module uses a homography to normalize the pile image. The source quadrilateral from the camera image is mapped to a square output image with \texttt{getPerspectiveTransform} and \texttt{warpPerspective}. This gives the anomaly model a consistent square view of the pile, independent of the viewing angle in the top camera. Before inference, the detector also normalizes image brightness in LAB color space.
+\paragraph{Finding the CTO.}
+The one step specific to this task is the stop condition. When the line is lost or an
+obstacle blocks the way, movement calls \texttt{classify\_face} on \texttt{classify\_face},
+which grabs a live frame and returns the person's name, role and gender. If the role is
+the CTO, the robot has arrived and report generation fires; otherwise it keeps following
+the line.
 
-The warped pile image is passed to the SuperSimpleNet inference wrapper. The model returns an anomaly score, a binary anomaly mask, and a continuous anomaly map. If the score is above the configured threshold, the service returns \texttt{defected}; otherwise it returns \texttt{not\_defected}. If the pile cannot be found or inference fails, the service returns \texttt{not\_found}. The service response also includes paths to saved images: the warped pile image and the generated anomaly mask. The movement module stores this result for the corresponding tile, and the report-generation module can later include the saved image and mask for defective tiles.
+\subsection{Speech and Remaining Services}
 
-\subsection{Other Services and Topics}
-
-Text to be added.
+\textbf{speak} is a shared utility: it listens on \path|/speak| and voices whatever is
+published there, which the greeting, the leak alert and the task prompts all use. The
+\texttt{line\_fit} node's \texttt{line\_fit\_in\_direction} service, used for the belt,
+fits a line to a lidar cone in a given direction and returns the perpendicular distance
+and the rotation needed to face it square on.
 
 \section{Results}
 
