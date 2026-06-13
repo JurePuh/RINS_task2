@@ -116,15 +116,42 @@ The method is based on face embeddings. A face embedding is a compact numerical 
 
 For classification, the embedding computed from the live camera image is compared with precomputed embeddings stored in the personnel database. The nearest stored embedding is selected using Euclidean distance. The selected entry gives the person's name, role, and gender.
 
+\subsection{Conversation}
+
+The conversation module is used when the robot has reached a detected person and needs
+to obtain one of the allowed tasks. Speech is transcribed with the Soniox API, then the
+transcript is normalized and matched against the task keywords for rings, barrels, and
+red or green anomaly inspection. Because speech recognition often returns similar
+sounding words, we use a small similar words dictionary that repairs common mistakes such
+as \emph{wings} to \emph{rings} or \emph{read} to \emph{red} before parsing the task.
+
 \subsection{Ring Detection}
 
-Text to be added.
+The ring detection logic combines RGB camera and a depth camera information. The RGB is used for the recognition of circles and colors and the depth camera (point cloud) is used to determine the position of the circle and remove false positives.
+
+The first thing we tried was Hough circle detection on the raw RGB image and color classification after. This was simple but produced many false positives from the barrels, faces and other textured areas. We also tested ellipse fitting but it didn't solve our main problems with the false positives. So for the final approach we decided to flip the order of the detection and color recognition by creating HSV color masks and detecting circles on each of those masks. That also simplified the color classification.
+
+The RGB image is converted to HSV and thresholded into color masks. HSV is used for easier classification of colors since it seperates hue from saturation and value and is more robust in different lighting. Hough circle detection is then applied per color mask instead of on the whole image. This simplifies the process and already reduces a lot of false positives on the areas not brightly colored.
+
+After testing there were still a number of cases where Hough transform detected false positives especially on colored barrels and faces. To make the detection more rigid we added ring topology checks. A real ring should have a coloured section on the edges but in the center it shouldn't be filled with the same color. So candidates with too much color from the mask in the middle area of the circle were rejected. This removed the false detection of barrels and faces.
+
+For the position of the ring we sampled only the colored pixels from the detected fitted ring and averaged them.
 
 \subsection{Barrel Detection}
 
 \subsubsection{Detection}
 
-Text to be added.
+The barrel detection logic combines RGB camera and a depth camera information. The RGB is used for finding possible barrel regions, while the point cloud is used for checking if the 3D points form a cylinder or not. The final output is barrel position along with its orientation, color and leak state.
+
+We used the idea from the ring detection from the start with HSV mask thresholding to determine the candidates. This was a good starting point to make the search space alot smaller. But 2D shape fitting was not good enough since some scenes included rectangular colored regions. For example the conveyor belt entrance is a similar mask region as a black barrel. That's why we added a 3D PCL RANSAC cylinder fitting model that we used on the candidate regions.
+
+For each colored region the point cloud samples are grouped together into a 3D cluster. They are first checked for size and depth then they are fitted with a PCL RANSAC cylinder model. We took the idea from the lectures.
+
+After the cylinder is fitted we use its axis to classify the barrel as horizontal or vertical. Horizontal barrels also provide orientation fields so the movement node can check for a leak near it.
+
+For robustness we also filter by height in the map so no barrels could be falsely detected up in the air such as chimneys in the background or leaks on the floor.
+
+Leak detection is linked to horizontal barrels only. First idea included a top down camera shot near the ends of the barrel. From that image we wanted to determine how much of the area is covered by leak colored pixels and we could avoid fitting anything on to the leak. But the idea proved to be inconsistent and hard in practice. The final implementation searches for contours very close to the horizontal barrels and is checked by 2d metrics for circularity, fill ratio and area. After that an ellipse is fitted onto the contour to draw the overlay.
 
 \subsubsection{Computing Inspection Goals}\label{sec:barrelgoals}
 
@@ -408,13 +435,72 @@ To make the result more stable, the module does not rely on only one frame. It r
 
 On success, the service returns the matched name, role, gender, and a message describing how many samples voted for the selected identity. The movement module stores this information in the current pending person and updates the visualization label.
 
+\subsection{Conversation}
+
+The conversation module is implemented as the ROS 2 node \texttt{conversation}. It
+exposes the \texttt{converse\_person} service, which is called by \texttt{movement} after
+the robot reaches a person and receives their gender from face classification.
+
+The node publishes all robot prompts to \path|/speak| and listens through a Soniox
+microphone client. The recognized utterance is lowercased, punctuation is removed, and
+the homophone dictionary in \texttt{homophones.py} replaces similar sounding words with
+the canonical task words. The parser then maps the cleaned text to one of the task
+strings: count rings, inspect barrels, red cell anomaly, green cell anomaly, or no task.
+If both anomaly colors are mentioned or no task is recognized, the dialogue asks a short
+follow-up question. The final task string is returned in the \texttt{ConversePerson}
+service response and stored by \texttt{movement} as the person's requested task.
+
 \subsection{Ring Detection}
 
+The ring detection module is implemented as the ROS2 node \texttt{detect\_rings}. It subscribes to the RGB image topic \path|/oakd/rgb/preview/image_raw| and the depth point cloud topic \path|/oakd/rgb/preview/depth/points|. They are then synchronized.
+
+For every frame the node builds HSV masks for all the colors and runs Hough circle detection on them. For each candidate circle the node then computes the radius the center color ratio and then samples depth from the colored points.
+
+If a detected ring is close to an already detected one in 3D space their values are combined and updated. They are organized using ids.
+
+To make the results even more robust, the node only publishes the ring after the threshold number of sightings is reached. Before that the rings are stored as potential rings in the node.
+
+Accepted rings are published on the \path|/ring_detect| topic using the custom \texttt{RingDetect} message:
+
+\begin{verbatim}
+float32 x
+float32 y
+int8 id
+string color
+\end{verbatim}
+
 \textbf{detect\_rings} publishes each ring on \path|/ring_detect| as \texttt{RingDetect},
-which carries the position, an id and a color. movement does little at drive time: it
+which carries the position, an id and a color. Movement does little at drive time: it
 records where each ring was seen and its color, and keeps them for the report.
 
 \subsection{Barrel Detection}
+
+The barrel and leak detector is implemented as the ROS2 C++ node \texttt{detect\_barrel\_cpp}. It subscribes to image topic \path|/oakd/rgb/preview/image_raw| and the depth point cloud topic \path|/oakd/rgb/preview/depth/points|.
+
+For every frame we convert the image to HSV and build color masks for every configured color. The masks are cleaned with morphological operations. Then we extract contours and reject too small or too large ones. For all the remaining nodes we sample 3D points and create an Euclidean cluster before we run the cylinder fitting algorithm.
+
+The cylinder fitting stage estimates normals for the cluster and runs PCL RANSAC. Candidates are rejected if they have too few inliers, invalid transforms are too high or are weirdly orientated.
+
+To make the results even more robust, the node only publishes the barrels after the threshold number of sightings is reached. This ensures there are no false positives and make the barrel 3D position more stable.
+
+Accepted barrels are published on the \path|/barrel_detect| topic using the custom \texttt{BarrelDetect} message:
+
+\begin{verbatim}
+float32 x
+float32 y
+float32 normal_x
+float32 normal_y
+int8 id
+string color
+bool horizontal
+bool leaking
+string path_to_image
+\end{verbatim}
+
+The leak detection runs if there is a detected horizontal barrel. The node builds a padded search region around the accepted barrel. It narrows the search down to the height region just above the floor and a few centimeters above that so the whole leak is in the frame and nothing else. It also checks that the leak is convex by sampling a straight vertical line of the contour and checking if the trend of points is going further away from the camera or not as we move up. This is done because we sometimes got false positives by sampling the barrel area again and detecting it as a leak.
+When we accept the leak area we fit and ellipse on top of it for visualization.
+
+Accepted leak candidates update the corresponding barrel track. The \texttt{leaking} flag is published only after repeated positive observations, so a single noisy frame does not immediately report a leak. When a leaking barrel is published, the detector saves a camera snapshot and includes its path in \texttt{path\_to\_image}.
 
 The barrel detector publishes \texttt{BarrelDetect} for every barrel it sees, whether or
 not a task is active. The message carries the position and normal, an id, the color, a
