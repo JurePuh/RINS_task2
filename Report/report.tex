@@ -158,7 +158,7 @@ Leak detection is linked to horizontal barrels only. First idea included a top d
 \begin{wrapfigure}{r}{0.33\textwidth}
   \centering
   \includegraphics[width=0.31\textwidth]{img/face_detection/barrel_sides.png}
-  \caption{Inspection goals around a horizontal barrel.}
+  \caption{Inspection goals around a horizontal barrel. Pruned goals crossed out.}
   \label{fig:barrel_goals}
 \end{wrapfigure}
 
@@ -246,7 +246,7 @@ which fills small gaps and leaves one solid segment per row.
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
   \includegraphics[width=0.30\textwidth]{img/follow_path/line_split_right.png}
-  \caption{Right edge holds as the line splits (line in black). The red line marks the right edge difference, the blue line the center.}
+  \caption{The red line marks the right edge difference, the blue line the center.}
   \label{fig:v_right}
 \end{wrapfigure}
 
@@ -281,6 +281,8 @@ Approaching a junction from the top, the other arm shows up on the robot's right
 sharp right turn. We reject that arm by requiring a newly detected segment to stay within
 $n$ pixels of the segment we are already following.
 
+\newpage
+
 \paragraph{Obstacles ahead.}
 We also watch the lidar like a \textbf{sonar}. We split the 90 degree cone in front of the
 robot into 7 bins and average the range in each. If any bin reads too close, the robot
@@ -300,7 +302,7 @@ worth a quick look at how the nav2 controller actually drives.
 \end{wrapfigure}
 
 \paragraph{Carrots and candidate paths.}
-The controller samples several candidate trajectories on each cycle, seeded from the
+The nav2 goal controller samples several candidate trajectories on each cycle, seeded from the
 previous path so it never scores complete nonsense, and the cost function picks the best
 one. The robot does not track that path exactly, since it jitters slightly between
 samples. Instead it chases a \textbf{carrot} placed on the path at a fixed lookahead
@@ -348,7 +350,7 @@ left off.
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.6\textwidth]{img/movement/ros_trees_behaviour.png}
-  \caption{Debug output of the behaviour tree (terminal screenshot) for the
+  \caption{Debug output of the behaviour tree for the
   sequence that visits a detected face. Behaviours brought to attention marked in red.}
   \label{fig:btree}
 \end{figure}
@@ -438,15 +440,14 @@ int8 id
 it calls \texttt{wall\_normal\_at} on \texttt{map\_query}, passing the face and robot
 positions; the service returns the wall point and its normal
 (Section~\ref{sec:facedest}). movement turns those into the 40\,cm stopping goal, sends it
-to nav2, and on arrival calls \texttt{converse\_person} on \texttt{conversation}. That
-service takes the person's gender and returns the chosen \textbf{task} string, which
-movement marks active.
+to nav2, and on arrival calls \texttt{classify\_face} on \texttt{face\_classification},
+which returns the person's \textbf{name}, \textbf{gender} and \textbf{role}. movement then
+calls \texttt{converse\_person} on \texttt{conversation}, passing the person's gender; that
+service returns the chosen \textbf{task} string, which movement marks active.
 
 \paragraph{Re-driving and fallback.}
 If \texttt{detect\_faces} republishes the same id, the true face has moved, so movement
-recomputes the goal from the new position. If \texttt{wall\_normal\_at} reports no usable
-wall, movement falls back to the direct robot to face approach from
-Section~\ref{sec:facedest}.
+recomputes the goal from the new position. 
 
 \subsection{Face Classification}
 
@@ -577,6 +578,23 @@ obstacle blocks the way, movement calls \texttt{classify\_face} on \texttt{class
 which grabs a live frame and returns the person's name, role and gender. If the role is
 the CTO, the robot has arrived and report generation fires; otherwise it keeps following
 the line.
+
+\subsection{Report Generation}
+
+When the robot reaches the CTO it assembles the final report described in the introduction:
+the ring count with the per color breakdown, the barrel table with each barrel's color and
+its horizontal and leaking flags, and the tile table with a defect flag per inspected tile,
+each task tagged with who requested it. movement already holds all of this from the running
+tasks, so report generation only formats what it has collected.
+
+The images are handled the same way. The detection services do not stream pictures back;
+instead \texttt{detect\_barrels} and \texttt{detect\_anomalies} save each relevant frame to
+disk and return only the \textbf{file path} in their service messages
+(\path|path_to_image| for a leaking barrel, the tile and mask paths for a defective tile).
+movement keeps these paths with the matching track, and at report time it simply follows
+them to pull in the leaking barrel snapshots and the defective tile images and masks.
+
+
 
 \subsection{Speech and Remaining Services}
 
