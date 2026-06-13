@@ -295,7 +295,7 @@ worth a quick look at how the nav2 controller actually drives.
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
   \includegraphics[width=0.30\textwidth]{img/movement/carrot.png}
-  \caption{Carrot on the planned path. Blue marks the close carrot, red the far carrot.}
+  \caption{Carrot on the planned path. Red line crosses keep-out area.}
   \label{fig:carrot}
 \end{wrapfigure}
 
@@ -347,8 +347,9 @@ left off.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.6\textwidth]{\dummyfig}
-  \caption{Example sequence: visiting a detected face.}
+  \includegraphics[width=0.6\textwidth]{img/movement/ros_trees_behaviour.png}
+  \caption{Debug output of the behaviour tree (terminal screenshot) for the
+  sequence that visits a detected face. Behaviours brought to attention marked in red.}
   \label{fig:btree}
 \end{figure}
 
@@ -356,9 +357,11 @@ left off.
 This made debugging direct: a failure points at the exact behaviour that caused it. It
 also made the code reusable, since many sequences share the same ``go to position X''
 behaviours, so we wrote each piece once and tested it everywhere. As an example, the
-sequence that visits a detected face chains three behaviours: drive to the goal from the
-wall normal, run the conversation, and mark the chosen task active
-(Figure~\ref{fig:btree}).
+sequence that visits a detected face chains three behaviours
+(Figure~\ref{fig:btree}): \texttt{ComputePersonDestination} computes the goal from the
+wall normal, \texttt{ConversePerson} runs the conversation, and
+\texttt{ActivateRequestedTask} marks the chosen task active. Notice, how easy it is to see
+where in the decision process a failure happens.
 
 \section{Implementation and Integration}
 
