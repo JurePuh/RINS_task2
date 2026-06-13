@@ -11,7 +11,7 @@
 \geometry{margin=2.5cm}
 
 % All figures point to this dummy image for now. Swap individual paths later.
-\newcommand{\dummyfig}{/Users/blaz/LOCAL/lFaks/RInS/Project2/Report/img/face_detection/face_detection.png}
+\newcommand{\dummyfig}{img/face_detection/face_detection.png}
 
 \title{RINS Task 2 Report \\[2pt] \large Team Name Placeholder}
 \author{Student One \and Student Two \and Student Three}
@@ -69,19 +69,8 @@ not the picture.
 
 \subsubsection{Calculating the Face Destination}\label{sec:facedest}
 
-\begin{wrapfigure}{r}{0.30\textwidth}
-  \centering
-  \includegraphics[width=0.28\textwidth]{\dummyfig}
-  \caption{Direct approach fails at a shallow angle.}
-  \label{fig:direct_fail}
-\end{wrapfigure}
-
-To start a conversation the robot must stop in front of a face. Our first goal was a
-point 40\,cm ahead of the face along the \emph{robot to face line}. Head on that works,
-but at a shallow angle it drops the goal beside the face or into the wall: the robot
-stalls and rarely ends up turned at the person (Figure~\ref{fig:direct_fail}). The
-quantity that fixes this is the \textbf{wall normal}, so the rest of this section
-computes it and turns it into a goal.
+Going straight to face produces suboptimal results. This is, why the wall normal at the face
+destination is needed. 
 
 \paragraph{Wall normal.}
 We tried the lidar first, and it was too fragile near corners and partial occlusions.
@@ -91,8 +80,8 @@ steadier than any single scan.
 
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
-  \includegraphics[width=0.30\textwidth]{\dummyfig}
-  \caption{Ray cast versus BFS to the wall.}
+  \includegraphics[width=0.30\textwidth]{img/face_detection/wall_normal.png}
+  \caption{Ray cast to the wall.}
   \label{fig:raycast}
 \end{wrapfigure}
 
@@ -141,7 +130,7 @@ Text to be added.
 
 \begin{wrapfigure}{r}{0.33\textwidth}
   \centering
-  \includegraphics[width=0.31\textwidth]{\dummyfig}
+  \includegraphics[width=0.31\textwidth]{img/face_detection/barrel_sides.png}
   \caption{Inspection goals around a horizontal barrel.}
   \label{fig:barrel_goals}
 \end{wrapfigure}
@@ -184,13 +173,6 @@ the model the node runs.
 
 \subsubsection{Navigating Along the Belt}\label{sec:belt}
 
-\begin{wrapfigure}{r}{0.32\textwidth}
-  \centering
-  \includegraphics[width=0.30\textwidth]{\dummyfig}
-  \caption{Line fit to the left scan cone.}
-  \label{fig:belt}
-\end{wrapfigure}
-
 Along the belt we publish velocities straight to \path|/cmd_vel| and skip nav2. This
 close to the wall, localization drifts, so a map pose would be unreliable; instead we
 read the belt straight from the \textbf{lidar}, which stays accurate at short range.
@@ -198,18 +180,19 @@ read the belt straight from the \textbf{lidar}, which stays accurate at short ra
 \paragraph{Line fit.}
 nav2 brings the robot to a fixed keypoint at the head of the belt. From there we fit a
 line with \textbf{RANSAC} to the 90 degree scan cone on the robot's left, since the belt
-runs along that side (Figure~\ref{fig:belt}). The fit hands back the perpendicular
+runs along that side. The fit hands back the perpendicular
 distance to the belt and the belt's orientation in the robot frame, which we use to set
 the exact distance from the belt and to turn precisely perpendicular before the run.
 
 \paragraph{PD wall following.}
 We poll the distance every controller tick and steer with a PD law:
-\[ e = d_{\text{true}} - d_{\text{target}},
-\qquad \omega = K_P\, e + K_D\, \frac{e - e_{\text{prev}}}{\Delta t}, \]
+\[ e_p = d_{\text{true}} - d_{\text{target}},
+\qquad e_d = \frac{e_p - e_{p,\text{prev}}}{\Delta t},
+\qquad \omega = K_P\, e_p + K_D\, e_d, \]
 where $d_{\text{true}}$ is the measured perpendicular distance, $d_{\text{target}}$ the
-distance we want to hold, $e_{\text{prev}}$ the previous tick's error, $\Delta t$ the
+distance we want to hold, $e_{p,\text{prev}}$ the previous tick's error, $\Delta t$ the
 tick period, and $K_P, K_D$ the gains. When the robot drifts away from the belt
-$d_{\text{true}}$ grows past $d_{\text{target}}$, the error turns positive, and $\omega$
+$d_{\text{true}}$ grows past $d_{\text{target}}$, the error $e_p$ turns positive, and $\omega$
 steers it back toward the belt; drift too close and the error goes negative and pushes it
 out again. The D term damps the correction, so the robot holds a straight line instead of
 weaving. We call the anomaly service at fixed distance steps as we move down the belt.
@@ -218,7 +201,7 @@ weaving. We call the anomaly service at fixed distance steps as we move down the
 
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
-  \includegraphics[width=0.30\textwidth]{\dummyfig}
+  \includegraphics[width=0.30\textwidth]{img/follow_path/follow_path.png}
   \caption{Two sample rows; the line mask is drawn in black.}
   \label{fig:line_rows}
 \end{wrapfigure}
@@ -235,8 +218,8 @@ which fills small gaps and leaves one solid segment per row.
 
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
-  \includegraphics[width=0.30\textwidth]{\dummyfig}
-  \caption{Right edge holds as the line splits (line in black).}
+  \includegraphics[width=0.30\textwidth]{img/follow_path/line_split_right.png}
+  \caption{Right edge holds as the line splits (line in black). The red line marks the right edge difference, the blue line the center.}
   \label{fig:v_right}
 \end{wrapfigure}
 
@@ -260,8 +243,8 @@ line splits (Figure~\ref{fig:v_right}), so tracking it keeps the D term smooth.
 
 \begin{wrapfigure}{r}{0.32\textwidth}
   \centering
-  \includegraphics[width=0.30\textwidth]{\dummyfig}
-  \caption{Approaching a junction from the top (line in black).}
+  \includegraphics[width=0.30\textwidth]{img/follow_path/junction_from_top.png}
+  \caption{Approaching a junction from the top.}
   \label{fig:v_top}
 \end{wrapfigure}
 
