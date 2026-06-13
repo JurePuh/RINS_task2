@@ -13,8 +13,8 @@
 % All figures point to this dummy image for now. Swap individual paths later.
 \newcommand{\dummyfig}{img/face_detection/face_detection.png}
 
-\title{RINS Task 2 Report \\[2pt] \large Team Name Placeholder}
-\author{Student One \and Student Two \and Student Three}
+\title{RINS Task 2 Report \\[2pt] \large Team NU}
+\author{Blaž Bergant \and Jure Puh \and Peter Žaucer}
 \date{}
 
 \begin{document}
@@ -369,9 +369,31 @@ where in the decision process a failure happens.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.9\textwidth]{\dummyfig}
-  \caption{The ROS node and topic graph, from \texttt{rqt\_graph}.}
+  \includegraphics[width=0.9\linewidth]{img/ros_graphs/1_overview.pdf}
+  \caption{ROS node architecture overview.}
   \label{fig:rqt}
+\end{figure}
+
+\clearpage
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\linewidth]{img/ros_graphs/2_perception.pdf}
+  \caption{ROS node architecture, continued: perception topics.}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\linewidth]{img/ros_graphs/3_services.pdf}
+  \caption{ROS node architecture, continued: service calls.}
+\end{figure}
+
+\clearpage
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.9\linewidth]{img/ros_graphs/4_actuation.pdf}
+  \caption{ROS node architecture, continued: actuation outputs.}
 \end{figure}
 
 The \textbf{movement} node is the central controller and holds the decision logic of
@@ -566,20 +588,76 @@ and the rotation needed to face it square on.
 
 \section{Results}
 
-Text to be added.
+In the end the full pipeline ran through both rooms: the robot found people, asked for
+tasks, counted rings, inspected barrels, checked the belt tiles, and followed the blue
+line to the CTO. Most of the work, however, went into making each part robust enough to
+survive a full run, since the first versions worked in isolation but broke under noise.
+
+\paragraph{Detections drifting and duplicating.}
+The raw detections were noisy: the same face, ring or barrel was seen at slightly
+different positions every frame. A single sighting was not trustworthy, so each detector
+keeps a running mean over repeated observations and only accepts a subject after it has
+been seen enough times near the same map point. Already accepted subjects are
+re-published when their averaged position drifts far enough, so movement always has the
+latest estimate without flooding the topics.
+
+\paragraph{Wrong ring colors.}
+A ring's color sometimes flipped between frames because of lighting and partial views.
+Instead of trusting the latest frame, the ring detector votes: every sighting adds to a
+per-color counter and the color with the most votes wins, which settled the flips.
+
+\paragraph{False barrel leaks.}
+Leak detection produced false positives when it re-sampled the barrel body itself. We
+restricted the search to the strip just above the floor and added a convexity check along
+a vertical sample line, and only report a leak after repeated positive observations so a
+single noisy frame cannot trigger the alert.
+
+\paragraph{Lighting on the tiles.}
+The anomaly model trained on the dataset performed poorly in Gazebo, where the ceramic
+piles looked much brighter than in the training images. We retrained on an additional
+brightness-augmented dataset and added LAB brightness normalization before inference,
+which made the tile classification reliable under the simulated lighting.
+
+\paragraph{Navigation around tight spots.}
+Going straight to a subject often left the robot poorly placed, and the yellow no go zone
+had to be respected at all times. Computing approach goals from the wall normal and adding
+a keep out map that the planner routes around fixed both problems.
 
 \section{Division of Work}
 
 \subsection{Who Did What}
 
-Text to be added.
+\textbf{Jure Puh} did the \textbf{face detection}, \textbf{face classification} and
+\textbf{anomaly detection} modules: the YOLO based detector that lifts faces onto the map,
+the embedding based classifier that identifies the personnel, and the SuperSimpleNet tile
+inspection on the belt.
+
+\textbf{Peter \v{Z}aucer} did the \textbf{ring detection} and \textbf{barrel detection}
+modules, including the color voting and the leak check, and the \textbf{speech} part that
+voices the greetings, prompts and alerts.
+
+\textbf{Bla\v{z} Bergant} did the \textbf{movement} node, the brain of the application:
+the decision logic, the behaviour tree, and the handling of the messages coming from the
+different topics and services. He also implemented the \textbf{blue line following} part
+that guides the robot through the second room to the CTO.
 
 \subsection{Percentages}
 
-Text to be added.
+\begin{itemize}
+  \item Jure Puh --- 30\%
+  \item Peter \v{Z}aucer --- 30\%
+  \item Bla\v{z} Bergant --- 40\%
+\end{itemize}
 
 \section{Conclusion}
 
-Text to be added.
+The project pulled perception, navigation and decision logic into a single pipeline that
+handled both rooms end to end. The biggest lesson was that a module working on its own is
+not the same as a module working inside the full run: nearly every part needed a layer of
+robustness, whether that was averaging over repeated detections, voting on colors,
+re-checking leaks, augmenting the training data, or planning around keep out zones.
+Splitting the work into independent ROS nodes that talk over clear topics and services
+made this possible, since each part could be tuned and tested on its own before being
+plugged into the behaviour tree that ties them together.
 
 \end{document}
