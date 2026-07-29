@@ -1,8 +1,55 @@
-# Project 2 — Workspace Setup
+# RINS Task 2 — Autonomous Robot Pipeline
 
-This README only covers setting up the workspace. It assumes you already have a typical ROS 2 development environment configured (ROS 2, `colcon`, Gazebo, Nav2, the RInS `dis_tutorial*` dependencies, etc.).
+**Team** · Blaž Bergant · Jure Puh · Peter Žaucer
 
-## 1. System packages (apt)
+ROS 2 project for RINS 2026 Task 2: a TurtleBot that explores two rooms, talks to people, runs perception tasks, and reports results to the CTO.
+
+**Full write-up:** [Report/report.pdf](Report/report.pdf)
+
+---
+
+## Overview
+
+The robot starts in the first room and searches for people. When it finds someone, it greets them and asks for a task. Four possible jobs:
+
+| Task | What the robot does |
+|------|---------------------|
+| **Count rings** | Record every ring seen (position + color) |
+| **Inspect barrels** | Record barrels; approach horizontal ones and check for leaks |
+| **Red / green cell anomaly** | Drive along the matching colored belt and inspect tiles for defects |
+
+A yellow line in the first room is a **no-go zone** — the planner never crosses it.
+
+After the first room is done, the robot enters the second room, follows a blue line through intersections, and stops when it reaches the **CTO**. That triggers the final report: ring counts, barrel table (with leak images), and tile inspection results (with anomaly masks), each tagged with who requested the task.
+
+---
+
+## Architecture
+
+Perception, geometry, conversation, and actuation are separate ROS 2 nodes. A central **movement** node (behaviour tree via `py_trees_ros`) orchestrates them over topics and services.
+
+| Area | Nodes / modules |
+|------|-----------------|
+| **Perception** | Face detection (YOLO), ring detection (HSV + Hough), barrel & leak detection (PCL RANSAC), blue-line vision |
+| **Recognition & speech** | Face classification (FaceNet embeddings), conversation (Soniox STT), TTS (`speak`) |
+| **Anomaly** | SuperSimpleNet tile inspection on the belt |
+| **Navigation** | Nav2 + keep-out map, wall-normal approach goals, PD belt / line following |
+| **Control** | Behaviour tree in `movement` |
+
+Packages live under `src/`:
+
+- `task2` — Python nodes (movement, faces, rings, conversation, anomaly, …)
+- `barrel_leak_cpp` — C++ barrel & leak detector
+- `msg_types` — custom messages and services
+- `dis_tutorial3` / `dis_tutorial7` — simulation, maps, TurtleBot launch
+
+---
+
+## Setup
+
+Assumes a working ROS 2 environment (e.g. Jazzy/Humble), `colcon`, Gazebo, Nav2, and the RInS tutorial dependencies.
+
+### System packages
 
 ```bash
 sudo apt update
@@ -17,10 +64,7 @@ sudo apt install -y \
     libpcl-dev
 ```
 
-- `libportaudio2` + `portaudio19-dev` + `espeak-ng` are needed for the conversation/speak nodes (microphone + TTS).
-- `ros-jazzy-py-trees-ros` + `ros-jazzy-py-trees` are needed for the movement behaviour tree node.
-
-## 3. Pip packages
+### Python packages
 
 ```bash
 pip install \
@@ -35,69 +79,59 @@ pip install \
     soniox
 ```
 
-Notes:
-- `ultralytics` is used for YOLO detection (the repo ships a `yolov8n.pt` weights file at the workspace root).
-- `facenet-pytorch` is used by the face classifier.
-- `soniox` + `sounddevice` are used by the conversation node for speech.
-- `py_trees` / `py_trees_ros` drive the movement behaviour tree and are installed via apt (step 1), not pip.
-
-Test the mic is visible:
+### Build
 
 ```bash
-python3 -m sounddevice
-```
-
-## 4. Building
-
-From the workspace root:
-
-```bash
-source /opt/ros/humble/setup.bash    # or your ROS distro
-source ~/venvs/rins/bin/activate
+source /opt/ros/jazzy/setup.bash   # or your distro
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-## 5. `~/.bashrc` additions
+### Environment
 
-Add these to `~/.bashrc` so every new terminal is ready to go:
+Add to `~/.bashrc` (then `source` it):
 
 ```bash
-# Make qt use single-threaded so gazebo doesnt crash
 export QSG_RENDER_LOOP=basic
-
-# Soniox API key for the conversation node
-export SONIOX_API_KEY='your_real_soniox_key_here'
-
-# Only if `ros2 run` can't import soniox / sounddevice from the user site:
-# export PYTHONPATH="$(python3 -m site --user-site):$PYTHONPATH"
+export SONIOX_API_KEY='your_soniox_key'
 ```
 
-Then `source ~/.bashrc`.
+---
 
-## 6. Running
+## Running
 
-Each command goes in its own terminal (source ROS + the workspace's `install/setup.bash` in every one first):
+Each command in its own terminal (source ROS + `install/setup.bash` first):
 
 ```bash
-# Terminal 1 — Zenoh RMW daemon
+# Terminal 1 — Zenoh RMW
 ros2 run rmw_zenoh_cpp rmw_zenohd
 
 # Terminal 2 — simulation + Nav2
 ros2 launch dis_tutorial7 sim_turtlebot_nav.launch.py
 
-# Terminal 3 — everything except the movement node
-clear && ros2 launch task2 not_movement.launch.py
+# Terminal 3 — all nodes except movement
+ros2 launch task2 not_movement.launch.py
 
-# Terminal 4 — movement / behaviour tree
+# Terminal 4 — behaviour tree
 ros2 run task2 movement
 ```
 
-### Debug logging
-
-Append `--ros-args --log-level <node>:=debug` to any node to turn on debug logs, e.g.:
+Debug a node with:
 
 ```bash
 ros2 run task2 movement --ros-args --log-level movement:=debug
 ```
 
+---
+
+## Report & team
+
+Methods, ROS graphs, results, and work split are in the PDF:
+
+→ **[Report/report.pdf](Report/report.pdf)**
+
+| Member | Focus |
+|--------|--------|
+| Blaž Bergant | Movement / behaviour tree, blue line following |
+| Jure Puh | Face detection & classification, anomaly detection |
+| Peter Žaucer | Ring & barrel detection, speech |

@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.6.12)  13 JUN 2026 02:37
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.6.12)  13 JUN 2026 02:48
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -243,6 +243,11 @@ Underfull \hbox (badness 4726) in paragraph at lines 161--161
 []\T1/cmr/m/n/10.95 Figure 2: In-spec-tion goals
  []
 
+
+Underfull \hbox (badness 6859) in paragraph at lines 161--161
+\T1/cmr/m/n/10.95 around a hor-i-zon-tal bar-rel.
+ []
+
 [3] [4 <./img/face_detection/barrel_sides.png>]
 <img/follow_path/follow_path.png, id=34, 248.93pt x 212.795pt>
 File: img/follow_path/follow_path.png Graphic file (type png)
@@ -272,39 +277,36 @@ Package pdftex.def Info: img/follow_path/junction_from_top.png  used on input li
 
 Package wrapfig Warning: Stationary wrapfigure forced to float on input line 279.
 
-
-Package wrapfig Warning: Stationary wrapfigure forced to float on input line 285.
-
-
-Package wrapfig Warning: Stationary wrapfigure forced to float on input line 289.
-
 [5 <./img/follow_path/follow_path.png> <./img/follow_path/line_split_right.png>]
 
-Package wrapfig Warning: Collision between wrapping environments on input line 295.
+Package wrapfig Warning: Collision between wrapping environments on input line 297.
 
 <img/movement/carrot.png, id=42, 158.5925pt x 168.63pt>
 File: img/movement/carrot.png Graphic file (type png)
 <use img/movement/carrot.png>
-Package pdftex.def Info: img/movement/carrot.png  used on input line 297.
+Package pdftex.def Info: img/movement/carrot.png  used on input line 299.
 (pdftex.def)             Requested size: 136.57462pt x 145.22995pt.
 
-Underfull \hbox (badness 4686) in paragraph at lines 298--298
+Underfull \hbox (badness 4686) in paragraph at lines 300--300
 []\T1/cmr/m/n/10.95 Figure 6: Car-rot on the
  []
 
 
-Package wrapfig Warning: Stationary wrapfigure forced to float on input line 303.
+Package wrapfig Warning: Stationary wrapfigure forced to float on input line 305.
 
 
-Package wrapfig Warning: Stationary wrapfigure forced to float on input line 310.
+Overfull \hbox (9.88225pt too wide) in paragraph at lines 332--336
+\T1/cmr/m/n/10.95 For the first task a small \T1/cmr/bx/n/10.95 state ma-chine \T1/cmr/m/n/10.95 was enough, with three states: \T1/cmtt/m/n/10.95 FollowPath\T1/cmr/m/n/10.95 , \T1/cmtt/m/n/10.95 VisitSubject
+ []
 
-<img/movement/ros_trees_behaviour.png, id=43, 403.5075pt x 228.855pt>
+[6 <./img/follow_path/junction_from_top.png> <./img/movement/carrot.png>]
+<img/movement/ros_trees_behaviour.png, id=48, 403.5075pt x 228.855pt>
 File: img/movement/ros_trees_behaviour.png Graphic file (type png)
 <use img/movement/ros_trees_behaviour.png>
-Package pdftex.def Info: img/movement/ros_trees_behaviour.png  used on input line 350.
+Package pdftex.def Info: img/movement/ros_trees_behaviour.png  used on input line 352.
 (pdftex.def)             Requested size: 273.14923pt x 154.92091pt.
-[6 <./img/follow_path/junction_from_top.png> <./img/movement/carrot.png>]
-Overfull \hbox (40.19783pt too wide) in paragraph at lines 357--365
+
+Overfull \hbox (40.19783pt too wide) in paragraph at lines 359--367
 \T1/cmr/m/n/10.95 putes the goal from the wall nor-mal, \T1/cmtt/m/n/10.95 ConversePerson \T1/cmr/m/n/10.95 runs the con-ver-sa-tion, and \T1/cmtt/m/n/10.95 ActivateRequestedTask
  []
 
@@ -314,7 +316,7 @@ pdfTeX warning: pdflatex (file ./img/ros_graphs/1_overview.pdf): PDF inclusion: 
 <img/ros_graphs/1_overview.pdf, id=49, 511.9125pt x 594.72188pt>
 File: img/ros_graphs/1_overview.pdf Graphic file (type pdf)
 <use img/ros_graphs/1_overview.pdf>
-Package pdftex.def Info: img/ros_graphs/1_overview.pdf  used on input line 372.
+Package pdftex.def Info: img/ros_graphs/1_overview.pdf  used on input line 374.
 (pdftex.def)             Requested size: 409.71692pt x 475.99594pt.
 [7 <./img/movement/ros_trees_behaviour.png>] [8 <./img/ros_graphs/1_overview.pdf>]
 
@@ -322,7 +324,7 @@ pdfTeX warning: pdflatex (file ./img/ros_graphs/2_perception.pdf): PDF inclusion
 <img/ros_graphs/2_perception.pdf, id=72, 511.9125pt x 338.76563pt>
 File: img/ros_graphs/2_perception.pdf Graphic file (type pdf)
 <use img/ros_graphs/2_perception.pdf>
-Package pdftex.def Info: img/ros_graphs/2_perception.pdf  used on input line 381.
+Package pdftex.def Info: img/ros_graphs/2_perception.pdf  used on input line 383.
 (pdftex.def)             Requested size: 327.7763pt x 216.91263pt.
 
 
@@ -330,7 +332,7 @@ pdfTeX warning: pdflatex (file ./img/ros_graphs/3_services.pdf): PDF inclusion: 
 <img/ros_graphs/3_services.pdf, id=73, 511.9125pt x 353.82187pt>
 File: img/ros_graphs/3_services.pdf Graphic file (type pdf)
 <use img/ros_graphs/3_services.pdf>
-Package pdftex.def Info: img/ros_graphs/3_services.pdf  used on input line 387.
+Package pdftex.def Info: img/ros_graphs/3_services.pdf  used on input line 389.
 (pdftex.def)             Requested size: 327.7763pt x 226.55319pt.
 [9
 
@@ -343,26 +345,26 @@ pdfTeX warning: pdflatex (file ./img/ros_graphs/4_actuation.pdf): PDF inclusion:
 <img/ros_graphs/4_actuation.pdf, id=96, 511.9125pt x 331.2375pt>
 File: img/ros_graphs/4_actuation.pdf Graphic file (type pdf)
 <use img/ros_graphs/4_actuation.pdf>
-Package pdftex.def Info: img/ros_graphs/4_actuation.pdf  used on input line 395.
+Package pdftex.def Info: img/ros_graphs/4_actuation.pdf  used on input line 397.
 (pdftex.def)             Requested size: 409.71692pt x 265.11165pt.
 
-Overfull \hbox (27.44968pt too wide) in paragraph at lines 404--407
+Overfull \hbox (27.44968pt too wide) in paragraph at lines 406--409
 \T1/cmr/m/n/10.95 rings on $\T1/cmtt/m/n/10.95 /ring _ detect$\T1/cmr/m/n/10.95 , the bar-rel de-tec-tor pub-lishes \T1/cmtt/m/n/10.95 BarrelDetect \T1/cmr/m/n/10.95 mes-sages, and \T1/cmtt/m/n/10.95 anomaly_detection
  []
 
 
-Overfull \hbox (29.14352pt too wide) in paragraph at lines 409--412
+Overfull \hbox (29.14352pt too wide) in paragraph at lines 411--414
 \T1/cmr/m/n/10.95 goals, \T1/cmtt/m/n/10.95 line_fit \T1/cmr/m/n/10.95 serves \T1/cmtt/m/n/10.95 line_fit_in_direction \T1/cmr/m/n/10.95 for the belt, and \T1/cmtt/m/n/10.95 blue_line \T1/cmr/m/n/10.95 pub-lishes \T1/cmtt/m/n/10.95 BlueLineStatus
  []
 
 [10
 
- <./img/ros_graphs/4_actuation.pdf>] [11] [12]
-Overfull \hbox (9.90219pt too wide) in paragraph at lines 583--588
+ <./img/ros_graphs/4_actuation.pdf>] [11] [12] [13]
+Overfull \hbox (9.90219pt too wide) in paragraph at lines 601--606
 \T1/cmr/m/n/10.95 greet-ing, the leak alert and the task prompts all use. The \T1/cmtt/m/n/10.95 line_fit \T1/cmr/m/n/10.95 node's \T1/cmtt/m/n/10.95 line_fit_in_direction
  []
 
-[13] [14] [15] (./report.aux)
+[14] [15] (./report.aux)
  ***********
 LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
@@ -377,9 +379,9 @@ Here is how much of TeX's memory you used:
  14 hyphenation exceptions out of 8191
  57i,6n,65p,661b,235s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1095.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1095.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm0800.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecti1095.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecbx1095.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecbx1200.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm1095.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecbx1440.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm1200.600pk> </home/puhster/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/ecrm1728.600pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texmf/fonts/type1/public/tex-gyre/qhvb.pfb></usr/share/texmf/fonts/type1/public/tex-gyre/qhvr.pfb>
-Output written on report.pdf (15 pages, 1577552 bytes).
+Output written on report.pdf (15 pages, 1579173 bytes).
 PDF statistics:
- 509 PDF objects out of 1000 (max. 8388607)
+ 511 PDF objects out of 1000 (max. 8388607)
  126 compressed objects within 2 object streams
  0 named destinations out of 1000 (max. 500000)
  56 words of extra memory for PDF output out of 10000 (max. 10000000)
